@@ -1,0 +1,66 @@
+<permissions>
+  <niagara-permission-groups type="all">
+    <req-permission>
+      <name>NETWORK_COMMUNICATION</name>
+      <purposeKey>AI API and OAuth 2.0 authentication access</purposeKey>
+      <parameters>
+        <parameter name="hosts" value="*"/>
+        <parameter name="ports" value="*"/>
+        <parameter name="type" value="all"/>
+        <parameter name="proxySelector" value="get"/>
+        <parameter name="SSLSockets" value="true"/>
+      </parameters>
+    </req-permission>
+    <req-permission>
+      <name>GET_ENVIRONMENT_VARIABLES</name>
+      <purposeKey>Read AI API key environment variables</purposeKey>
+      <parameters>
+        <parameter name="variables" value="*"/>
+      </parameters>
+    </req-permission>
+  </niagara-permission-groups>
+  <niagara-permission-groups type="workbench">
+    <req-permission>
+      <name>NETWORK_COMMUNICATION</name>
+      <purposeKey>AI API and OAuth 2.0 authentication access in Workbench</purposeKey>
+      <parameters>
+        <parameter name="hosts" value="*"/>
+        <parameter name="ports" value="*"/>
+        <parameter name="type" value="all"/>
+        <parameter name="proxySelector" value="get"/>
+        <parameter name="SSLSockets" value="true"/>
+      </parameters>
+    </req-permission>
+    <req-permission>
+      <name>GET_ENVIRONMENT_VARIABLES</name>
+      <purposeKey>Read AI API key environment variables in Workbench</purposeKey>
+      <parameters>
+        <parameter name="variables" value="*"/>
+      </parameters>
+    </req-permission>
+    <req-permission>
+      <name>UI</name>
+      <purposeKey>Workbench AI UI and Browser OAuth</purposeKey>
+    </req-permission>
+  </niagara-permission-groups>
+  <niagara-permission-groups type="station">
+    <req-permission>
+      <name>NETWORK_COMMUNICATION</name>
+      <purposeKey>Outside access for AI Assistant</purposeKey>
+      <parameters>
+        <parameter name="hosts" value="*"/>
+        <parameter name="ports" value="*"/>
+        <parameter name="type" value="all"/>
+        <parameter name="proxySelector" value="get"/>
+        <parameter name="SSLSockets" value="true"/>
+      </parameters>
+    </req-permission>
+    <req-permission>
+      <name>GET_ENVIRONMENT_VARIABLES</name>
+      <purposeKey>Read AI API key environment variables in Station</purposeKey>
+      <parameters>
+        <parameter name="variables" value="*"/>
+      </parameters>
+    </req-permission>
+  </niagara-permission-groups>
+</permissions>

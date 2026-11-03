@@ -1,0 +1,67 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# IntelliJ IDEA & IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+**/out/
+.vscode/
+.classpath
+.project
+.settings/
+
+# Compiled Java & Archives
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/resources/gradle/wrapper/gradle-wrapper.jar
+bin/
+**/bin/
+hs_err_pid*
+replay_pid*
+
+# Niagara Specific & Local Configuration
+local/
+local.properties
+niagara_home.properties
+.niagara/
+**/module-include.generated.xml
+module.include
+module.palette.include
+
+# Environment & Secrets
+.env
+.env.local
+*.pem
+*.key
+.credentials
+eddiesWorkbenchAI.properties
+
+# Logs & Temporary Files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+desktop.ini

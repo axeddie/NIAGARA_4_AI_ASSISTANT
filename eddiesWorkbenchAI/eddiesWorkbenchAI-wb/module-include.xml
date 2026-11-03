@@ -1,0 +1,5 @@
+<types>
+  <!--com.eddieturner.eddiesWorkbenchAI.ui-->
+  <type class="com.eddieturner.eddiesWorkbenchAI.ui.BEddiesAiSideBar" name="EddiesAiSideBar"/>
+  <type class="com.eddieturner.eddiesWorkbenchAI.ui.BEddiesAiTool" name="EddiesAiTool"/>
+</types>
