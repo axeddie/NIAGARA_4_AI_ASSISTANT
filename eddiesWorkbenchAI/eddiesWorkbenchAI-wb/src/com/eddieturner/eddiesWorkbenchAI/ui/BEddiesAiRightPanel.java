@@ -76,6 +76,7 @@ public final class BEddiesAiRightPanel
   private BLabel statusLabel;
 
   private BLabel pendingPlanLabel;
+  private BButton arrangeWsBtn;
   private BButton previewPlanBtn;
   private BButton applyPlanBtn;
   private BButton undoBtn;
@@ -319,7 +320,7 @@ public final class BEddiesAiRightPanel
 
   private BWidget buildQuickActionsBar()
   {
-    BGridPane chips = new BGridPane(4);
+    BGridPane chips = new BGridPane(5);
     chips.setColumnGap(4.0);
     chips.setUniformColumnWidth(true);
 
@@ -329,6 +330,23 @@ public final class BEddiesAiRightPanel
     chips.add("buildLogic", makeQuickPromptButton(
       "Build Logic",
       "Create and wire the following logic on the active WireSheet: "));
+
+    Command arrangeQuickCmd = new Command(
+      rootPane,
+      "Arrange WS",
+      null,
+      null,
+      "Arrange all blocks on the active WireSheet (left-to-right signal flow for linked logic; 5-col alphabetical grid for unlinked blocks)")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        arrangeActiveWiresheetNow();
+        return null;
+      }
+    };
+    chips.add("arrange", new BButton(arrangeQuickCmd, true, false));
+
     chips.add("program", makeQuickPromptButton(
       "Program Code",
       "Write or update the Niagara 4 BProgram Java code on the active target for: "));
@@ -407,6 +425,22 @@ public final class BEddiesAiRightPanel
     pendingPlanLabel = new BLabel("Station Plan: None pending", barFont);
     pendingPlanLabel.setForeground(BBrush.makeSolid(BColor.make(70, 85, 110)));
 
+    Command arrangeCmd = new Command(
+      rootPane,
+      "Arrange WS",
+      null,
+      null,
+      "Arrange all blocks on the active WireSheet (left-to-right signal flow + alphabetical grid)")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        arrangeActiveWiresheetNow();
+        return null;
+      }
+    };
+    arrangeWsBtn = new BButton(arrangeCmd, true, false);
+
     Command previewCmd = new Command(rootPane, "Preview")
     {
       @Override
@@ -450,6 +484,7 @@ public final class BEddiesAiRightPanel
       public CommandArtifact doInvoke()
       {
         String msg = StationActionExecutor.undoLastBatch();
+        WiresheetLayoutEngine.refreshActiveWiresheetView(shell);
         appendSystemLog(msg);
         updateActionButtonsState();
         syncContextFromShell();
@@ -459,8 +494,9 @@ public final class BEddiesAiRightPanel
     undoBtn = new BButton(undoCmd, true, false);
     undoBtn.setEnabled(false);
 
-    BGridPane btnGroup = new BGridPane(3);
+    BGridPane btnGroup = new BGridPane(4);
     btnGroup.setColumnGap(4.0);
+    btnGroup.add("arr", arrangeWsBtn);
     btnGroup.add("prev", previewPlanBtn);
     btnGroup.add("app", applyPlanBtn);
     btnGroup.add("undo", undoBtn);
@@ -797,6 +833,19 @@ public final class BEddiesAiRightPanel
     if (statusLabel != null)
     {
       statusLabel.setText("Error at " + timestamp);
+    }
+  }
+
+  private void arrangeActiveWiresheetNow()
+  {
+    syncContextFromShell();
+    String msg = StationActionExecutor.arrangeActiveWiresheet(shell);
+    appendSystemLog("=== WireSheet Auto-Layout ===\n" + msg);
+    updateActionButtonsState();
+    syncContextFromShell();
+    if (statusLabel != null)
+    {
+      statusLabel.setText(msg);
     }
   }
 

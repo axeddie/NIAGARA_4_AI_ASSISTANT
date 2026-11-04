@@ -7,8 +7,11 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.baja.file.BIFile;
 import javax.baja.io.ValueDocDecoder;
 import javax.baja.naming.BOrd;
@@ -237,6 +240,10 @@ public final class StationActionExecutor
       {
         sb.append("Import BOG XML component graph into ").append(firstNonEmpty(a.get("parent"), "activeTarget"));
       }
+      else if ("arrangeWiresheet".equalsIgnoreCase(act) || "layoutWiresheet".equalsIgnoreCase(act))
+      {
+        sb.append("Arrange WireSheet layout on ").append(firstNonEmpty(a.get("parent"), a.get("component"), "activeTarget"));
+      }
       else
       {
         sb.append(a.toString());
@@ -244,6 +251,33 @@ public final class StationActionExecutor
       sb.append("\n");
     }
     return sb.toString();
+  }
+
+  /**
+   * Executes a 1-click full WireSheet arrangement on the active target container in Workbench,
+   * pushing all position changes onto the Undo stack so the user can revert with 1 click.
+   */
+  public static String arrangeActiveWiresheet(BWbShell shell)
+  {
+    StationContextExtractor.StationTarget ctx = StationContextExtractor.extract(shell);
+    BComponent container = resolveContainerComponent(ctx.targetComponent);
+    if (container == null)
+    {
+      return "No active WireSheet container component is selected in Workbench.";
+    }
+
+    List<Runnable> undoOps = new ArrayList<Runnable>();
+    String msg = WiresheetLayoutEngine.arrangeWiresheet(container, undoOps);
+    if (!undoOps.isEmpty())
+    {
+      synchronized (LAST_UNDO_STACK)
+      {
+        LAST_UNDO_STACK.clear();
+        LAST_UNDO_STACK.addAll(undoOps);
+      }
+    }
+    WiresheetLayoutEngine.refreshActiveWiresheetView(shell);
+    return msg;
   }
 
   /**
@@ -261,6 +295,9 @@ public final class StationActionExecutor
     BIFile activePxFile = ctx.pxFile;
 
     final List<Runnable> undoOps = new ArrayList<Runnable>();
+    final Map<BComponent, Set<String>> touchedNamesByContainer = new LinkedHashMap<BComponent, Set<String>>();
+    final Map<BComponent, List<WiresheetLayoutEngine.ExplicitLink>> explicitLinksByContainer =
+      new LinkedHashMap<BComponent, List<WiresheetLayoutEngine.ExplicitLink>>();
     StringBuilder logBuilder = new StringBuilder();
     logBuilder.append("Executing ").append(plan.size()).append(" station action(s)...\n");
 
@@ -299,13 +336,58 @@ public final class StationActionExecutor
 
           BComponent newComp = (BComponent) ((BValue) type.getInstance()).newCopy();
 
-          if (parent.get(name) != null)
+          final String addedName = name;
+          int rawX = (xStr != null && !xStr.isEmpty()) ? Integer.parseInt(xStr) : (3 + (index % 4) * 14);
+          int rawY = (yStr != null && !yStr.isEmpty()) ? Integer.parseInt(yStr) : (3 + (index / 4) * 7);
+
+          int p = (rawX > 120) ? Math.round(rawX / 12.0f) : Math.max(2, rawX);
+          int q = (rawY > 180) ? Math.round(rawY / 12.0f) : Math.max(2, rawY);
+
+          int reqWidth = WiresheetLayoutEngine.computeRequiredWixelWidth(newComp, addedName);
+          BWsAnnotation annotation = BWsAnnotation.make(p, q, reqWidth);
+          if (newComp.get("wsAnnotation") != null)
           {
-            parent.remove(name);
-            logBuilder.append("Replaced existing \"").append(name).append("\". ");
+            newComp.set("wsAnnotation", annotation, null);
+          }
+          else
+          {
+            newComp.add("wsAnnotation", annotation);
           }
 
-          final String addedName = name;
+          // Pre-populate facets and value on newComp BEFORE parent.add so initial Fox serialization includes them
+          if (initFacets != null && !initFacets.trim().isEmpty())
+          {
+            try
+            {
+              applyFacetsToComponent(newComp, "facets", initFacets, null);
+            }
+            catch (Throwable ignore)
+            {
+            }
+          }
+          if (initValue != null && !initValue.trim().isEmpty())
+          {
+            try
+            {
+              Slot targetValSlot = resolveSlot(newComp, "fallback");
+              if (targetValSlot == null) targetValSlot = resolveSlot(newComp, "out");
+              if (targetValSlot == null) targetValSlot = resolveSlot(newComp, "in10");
+              if (targetValSlot instanceof Property)
+              {
+                applyPropertyValue(newComp, (Property) targetValSlot, initValue, null);
+              }
+            }
+            catch (Throwable ignore)
+            {
+            }
+          }
+
+          if (parent.get(addedName) != null)
+          {
+            parent.remove(addedName);
+            logBuilder.append("Replaced existing \"").append(addedName).append("\". ");
+          }
+
           parent.add(addedName, newComp);
           undoOps.add(new Runnable()
           {
@@ -316,48 +398,38 @@ public final class StationActionExecutor
             }
           });
 
-          int rawX = (xStr != null && !xStr.isEmpty()) ? Integer.parseInt(xStr) : 10;
-          int rawY = (yStr != null && !yStr.isEmpty()) ? Integer.parseInt(yStr) : (10 + (index * 15));
-
-          int p = (rawX >= 50) ? Math.round(rawX / 10.0f) : rawX;
-          int q = (rawY >= 50) ? Math.round(rawY / 10.0f) : rawY;
-
-          String lowerName = name != null ? name.toLowerCase() : "";
-          if ((lowerName.contains("result") || lowerName.contains("output")
-            || lowerName.contains("cmd") || lowerName.contains("command")
-            || lowerName.contains("actuator")) && p <= 10)
+          // Re-fetch the mounted component from parent (critical when parent is a remote Fox station proxy)
+          BComponent mountedComp = resolveMountedChild(parent, addedName, newComp);
+          if (mountedComp != newComp)
           {
-            p = 50;
-          }
-
-          BWsAnnotation annotation = BWsAnnotation.make(p, q);
-          if (newComp.get("wsAnnotation") != null)
-          {
-            newComp.set("wsAnnotation", annotation, null);
-          }
-          else
-          {
-            newComp.add("wsAnnotation", annotation);
-          }
-
-          if (initFacets != null && !initFacets.trim().isEmpty())
-          {
-            applyFacetsToComponent(newComp, "facets", initFacets, undoOps);
-          }
-
-          if (initValue != null && !initValue.trim().isEmpty())
-          {
-            Slot targetValSlot = resolveSlot(newComp, "fallback");
-            if (targetValSlot == null) targetValSlot = resolveSlot(newComp, "out");
-            if (targetValSlot == null) targetValSlot = resolveSlot(newComp, "in10");
-            if (targetValSlot instanceof Property)
+            if (mountedComp.get("wsAnnotation") != null)
             {
-              applyPropertyValue(newComp, (Property) targetValSlot, initValue, undoOps);
+              mountedComp.set("wsAnnotation", annotation, null);
+            }
+            else
+            {
+              mountedComp.add("wsAnnotation", annotation);
+            }
+            if (initFacets != null && !initFacets.trim().isEmpty())
+            {
+              applyFacetsToComponent(mountedComp, "facets", initFacets, undoOps);
+            }
+            if (initValue != null && !initValue.trim().isEmpty())
+            {
+              Slot targetValSlot = resolveSlot(mountedComp, "fallback");
+              if (targetValSlot == null) targetValSlot = resolveSlot(mountedComp, "out");
+              if (targetValSlot == null) targetValSlot = resolveSlot(mountedComp, "in10");
+              if (targetValSlot instanceof Property)
+              {
+                applyPropertyValue(mountedComp, (Property) targetValSlot, initValue, undoOps);
+              }
             }
           }
 
-          logBuilder.append("Created \"").append(name).append("\" (").append(type.toString())
-            .append(") at wixels (").append(p).append(",").append(q).append(").\n");
+          recordTouchedComponentName(touchedNamesByContainer, parent, addedName);
+
+          logBuilder.append("Created \"").append(addedName).append("\" (").append(type.toString())
+            .append(") width=").append(reqWidth).append(" wixels.\n");
         }
         else if ("setSlotValue".equalsIgnoreCase(actionName) || "setProperty".equalsIgnoreCase(actionName))
         {
@@ -460,25 +532,6 @@ public final class StationActionExecutor
             throw new Exception("Target slot not found: " + (targetSlotStr.isEmpty() ? "inA/fallback" : targetSlotStr) + " on " + target.getName());
           }
 
-          // Smart Auto-Layout: Ensure target sits to the right of source on the wiresheet
-          if (source.get("wsAnnotation") instanceof BWsAnnotation && target.get("wsAnnotation") instanceof BWsAnnotation)
-          {
-            BWsAnnotation srcAnno = (BWsAnnotation) source.get("wsAnnotation");
-            BWsAnnotation tgtAnno = (BWsAnnotation) target.get("wsAnnotation");
-
-            if (tgtAnno.p <= srcAnno.p)
-            {
-              int newP = srcAnno.p + 20;
-              int newQ = tgtAnno.q;
-              if (newQ <= 10 && srcAnno.q > 10)
-              {
-                newQ = srcAnno.q;
-              }
-              BWsAnnotation adjustedAnno = BWsAnnotation.make(newP, newQ);
-              target.set("wsAnnotation", adjustedAnno, null);
-            }
-          }
-
           BLink link = null;
           try
           {
@@ -486,10 +539,10 @@ public final class StationActionExecutor
           }
           catch (Throwable ignore) {}
 
-          BOrd sourceOrd = source.getSlotPathOrd();
+          BOrd sourceOrd = source.getHandleOrd();
           if (sourceOrd == null || sourceOrd.isNull())
           {
-            sourceOrd = source.getHandleOrd();
+            sourceOrd = source.getSlotPathOrd();
           }
           if (sourceOrd == null || sourceOrd.isNull())
           {
@@ -515,6 +568,25 @@ public final class StationActionExecutor
             }
           });
 
+          BComponent srcParent = source.getParentComponent();
+          BComponent tgtParent = target.getParentComponent();
+          if (srcParent != null)
+          {
+            recordTouchedComponentName(touchedNamesByContainer, srcParent, source.getName());
+          }
+          if (tgtParent != null)
+          {
+            recordTouchedComponentName(touchedNamesByContainer, tgtParent, target.getName());
+          }
+          if (srcParent != null && srcParent == tgtParent)
+          {
+            recordExplicitLink(
+              explicitLinksByContainer,
+              srcParent,
+              new WiresheetLayoutEngine.ExplicitLink(
+                source.getName(), sourceSlot.getName(), target.getName(), targetSlot.getName()));
+          }
+
           logBuilder.append("Linked \"").append(source.getName()).append(".").append(sourceSlot.getName())
             .append("\" -> \"").append(target.getName()).append(".").append(targetSlot.getName()).append("\".\n");
         }
@@ -535,8 +607,29 @@ public final class StationActionExecutor
             {
               BLink lnk = links[k];
               boolean slotMatch = targetSlotStr.isEmpty() || targetSlotStr.equalsIgnoreCase(lnk.getTargetSlotName());
-              boolean srcMatch = sourceStr.isEmpty()
-                || (lnk.getSourceComponent() != null && sourceStr.equalsIgnoreCase(lnk.getSourceComponent().getName()));
+              boolean srcMatch = sourceStr.isEmpty();
+              if (!srcMatch)
+              {
+                try
+                {
+                  BComponent sc = lnk.getSourceComponent();
+                  if (sc != null && sourceStr.equalsIgnoreCase(sc.getName()))
+                  {
+                    srcMatch = true;
+                  }
+                }
+                catch (Throwable ignore)
+                {
+                }
+                if (!srcMatch && lnk.getSourceOrd() != null)
+                {
+                  String ordStr = lnk.getSourceOrd().toString().toLowerCase();
+                  if (ordStr.endsWith("/" + sourceStr.toLowerCase()) || ordStr.endsWith(":" + sourceStr.toLowerCase()))
+                  {
+                    srcMatch = true;
+                  }
+                }
+              }
               if (slotMatch && srcMatch)
               {
                 target.remove(lnk);
@@ -703,11 +796,25 @@ public final class StationActionExecutor
                 Property dp = dynProps[pIdx];
                 final String slotName = dp.getName();
                 BValue childCopy = rootDecoded.get(dp).newCopy();
+                if (childCopy instanceof BComponent)
+                {
+                  BComponent childComp = (BComponent) childCopy;
+                  int reqW = WiresheetLayoutEngine.computeRequiredWixelWidth(childComp, slotName);
+                  BWsAnnotation initAnno = BWsAnnotation.make(3 + (pIdx % 4) * 14, 3 + (pIdx / 4) * 7, reqW);
+                  if (childComp.get("wsAnnotation") == null)
+                  {
+                    childComp.add("wsAnnotation", initAnno);
+                  }
+                }
                 if (parent.get(slotName) != null)
                 {
                   parent.remove(slotName);
                 }
                 parent.add(slotName, childCopy, rootDecoded.getFlags(dp), rootDecoded.getSlotFacets(dp), null);
+                if (childCopy instanceof BComponent)
+                {
+                  recordTouchedComponentName(touchedNamesByContainer, parent, slotName);
+                }
                 undoOps.add(new Runnable()
                 {
                   @Override
@@ -727,6 +834,20 @@ public final class StationActionExecutor
             try { decoder.close(); } catch (Throwable ignore) {}
           }
         }
+        else if ("arrangeWiresheet".equalsIgnoreCase(actionName) || "layoutWiresheet".equalsIgnoreCase(actionName))
+        {
+          String parentStr = firstNonEmpty(action.get("parent"), action.get("component"), action.get("target"));
+          BComponent container = (parentStr != null && !parentStr.trim().isEmpty())
+            ? resolveComponent(baseComp, parentStr)
+            : resolveContainerComponent(baseComp);
+          if (container == null)
+          {
+            throw new Exception("No target WireSheet container component found for arrangeWiresheet.");
+          }
+          String layoutMsg = WiresheetLayoutEngine.arrangeWiresheet(container, undoOps);
+          logBuilder.append(layoutMsg).append("\n");
+          touchedNamesByContainer.remove(container);
+        }
         else
         {
           throw new Exception("Unknown action type: " + actionName);
@@ -735,6 +856,27 @@ public final class StationActionExecutor
       catch (Exception e)
       {
         logBuilder.append("FAILED (").append(actionName).append("): ").append(e.getMessage()).append("\n");
+      }
+    }
+
+    // Automatically run topological/grid WireSheet layout on any container where components/links were added
+    for (Map.Entry<BComponent, Set<String>> entry : touchedNamesByContainer.entrySet())
+    {
+      try
+      {
+        BComponent container = entry.getKey();
+        List<WiresheetLayoutEngine.ExplicitLink> expLinks = explicitLinksByContainer.get(container);
+        String autoLayoutMsg = WiresheetLayoutEngine.arrangeComponentsInCleanSpace(
+          container, entry.getValue(), expLinks, undoOps);
+        if (autoLayoutMsg != null && !autoLayoutMsg.isEmpty())
+        {
+          logBuilder.append("[Layout] ").append(autoLayoutMsg).append("\n");
+        }
+      }
+      catch (Throwable t)
+      {
+        logBuilder.append("[Layout Warning] ").append(t.getClass().getSimpleName())
+          .append(": ").append(t.getMessage()).append("\n");
       }
     }
 
@@ -747,7 +889,68 @@ public final class StationActionExecutor
       }
     }
 
+    WiresheetLayoutEngine.refreshActiveWiresheetView(shell);
     return logBuilder.toString();
+  }
+
+  private static BComponent resolveMountedChild(BComponent parent, String childName, BComponent fallback)
+  {
+    if (parent != null && childName != null)
+    {
+      try
+      {
+        BValue v = parent.get(childName);
+        if (v instanceof BComponent)
+        {
+          return (BComponent) v;
+        }
+        BComponent[] children = parent.getChildComponents();
+        if (children != null)
+        {
+          for (int i = 0; i < children.length; i++)
+          {
+            if (children[i] != null && childName.equalsIgnoreCase(children[i].getName()))
+            {
+              return children[i];
+            }
+          }
+        }
+      }
+      catch (Throwable ignore)
+      {
+      }
+    }
+    return fallback;
+  }
+
+  private static void recordTouchedComponentName(
+    Map<BComponent, Set<String>> map,
+    BComponent container,
+    String compName)
+  {
+    if (container == null || compName == null || compName.trim().isEmpty()) return;
+    Set<String> set = map.get(container);
+    if (set == null)
+    {
+      set = new LinkedHashSet<String>();
+      map.put(container, set);
+    }
+    set.add(compName.trim());
+  }
+
+  private static void recordExplicitLink(
+    Map<BComponent, List<WiresheetLayoutEngine.ExplicitLink>> map,
+    BComponent container,
+    WiresheetLayoutEngine.ExplicitLink link)
+  {
+    if (container == null || link == null) return;
+    List<WiresheetLayoutEngine.ExplicitLink> list = map.get(container);
+    if (list == null)
+    {
+      list = new ArrayList<WiresheetLayoutEngine.ExplicitLink>();
+      map.put(container, list);
+    }
+    list.add(link);
   }
 
   // ============================================================================

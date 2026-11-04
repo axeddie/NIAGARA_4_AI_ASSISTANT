@@ -38,10 +38,10 @@ public final class EddiesAiClient
     + "- RULES FOR STATION ACTIONS:\n"
     + "  1. Component Names: Valid alphanumeric Niagara identifiers (no spaces or special characters like -, /, #).\n"
     + "  2. Wiresheet Layout (Strict Left-to-Right Signal Flow in Wixels; 1 wixel = 10 pixels / 1 grid cell):\n"
-    + "     - Column 1 (Left, x=10): Inputs, Sensors, Setpoints, Constants (spaced vertically: y=10, y=25, y=40...).\n"
-    + "     - Column 2 (Center, x=30): Math, Logic, Processing, PID (spaced vertically: y=15, y=30...).\n"
-    + "     - Column 3 (Right, x=50): Results, Outputs, Commands, Actuators (aligned vertically with driving block: y=15, y=30...).\n"
-    + "     - CRITICAL POSITIONING RULE: Never place a Result, Output, or Command component in Column 1 (x=10); place them in Column 3 (x=50).\n"
+    + "     - Stage 0 (Left, x=4): Inputs, Sensors, Setpoints, Constants (spaced vertically: y=4, y=14, y=24...).\n"
+    + "     - Stage 1 (Center, x=24): Math, Logic, Processing, PID (spaced vertically: y=8, y=18...).\n"
+    + "     - Stage 2+ (Right, x=44, 64...): Downstream Logic, Results, Outputs, Commands, Actuators.\n"
+    + "     - Note: The Workbench executor also runs an automatic topological left-to-right signal-flow and 5->4->3 column grid layout pass with dynamic block widths (min 10 wixels).\n"
     + "  3. Common Niagara TypeSpecs:\n"
     + "     - Points (control): control:NumericWritable, control:BooleanWritable, control:EnumWritable, control:StringWritable, control:NumericPoint, control:BooleanPoint\n"
     + "     - Math (kitControl): kitControl:Add, kitControl:Subtract, kitControl:Multiply, kitControl:Divide, kitControl:Minimum, kitControl:Maximum, kitControl:Average, kitControl:AbsValue, kitControl:SquareRoot, kitControl:MinMaxAvg, kitControl:Reset\n"
@@ -53,7 +53,7 @@ public final class EddiesAiClient
     + "     - LoopPoint (PID): inputs are 'controlledVariable', 'setpoint'; output is 'out'.\n"
     + "  5. NiagaraProxyExt Rule: For Niagara Network proxy points (nd:NiagaraProxyExt), pointId MUST always include 'station:|' before 'slot:/...'.\n"
     + "  6. Supported JSON Action Objects inside <station-actions>[ ... ]</station-actions>:\n"
-    + "     - {\"action\": \"createComponent\", \"type\": \"control:NumericWritable\", \"name\": \"ZoneTemp\", \"x\": 10, \"y\": 10, \"value\": \"72.5\"}\n"
+    + "     - {\"action\": \"createComponent\", \"type\": \"control:NumericWritable\", \"name\": \"ZoneTemp\", \"x\": 4, \"y\": 4, \"value\": \"72.5\"}\n"
     + "     - {\"action\": \"setSlotValue\", \"component\": \"ZoneTemp\", \"slot\": \"fallback\", \"value\": \"72.5\"}\n"
     + "     - {\"action\": \"setFacets\", \"component\": \"ZoneTemp\", \"slot\": \"facets\", \"facets\": \"units=u:fahrenheit;°F;(K)|precision=i:1\"}\n"
     + "     - {\"action\": \"link\", \"source\": \"Input1\", \"sourceSlot\": \"out\", \"target\": \"AddBlock\", \"targetSlot\": \"inA\"}\n"
@@ -63,7 +63,8 @@ public final class EddiesAiClient
     + "     - {\"action\": \"invokeAction\", \"component\": \"PointName\", \"actionName\": \"auto\"}\n"
     + "     - {\"action\": \"updateProgram\", \"component\": \"activeTarget\", \"source\": \"public void onExecute() throws Exception { ... }\"}\n"
     + "     - {\"action\": \"updatePxFile\", \"xml\": \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><px version=\\\"1.0\\\" media=\\\"workbench:WbPxMedia\\\">...</px>\"}\n"
-    + "     - {\"action\": \"importBog\", \"bog\": \"<bajaObjectGraph version=\\\"4.0\\\">...</bajaObjectGraph>\"}\n";
+    + "     - {\"action\": \"importBog\", \"bog\": \"<bajaObjectGraph version=\\\"4.0\\\">...</bajaObjectGraph>\"}\n"
+    + "     - {\"action\": \"arrangeWiresheet\", \"parent\": \"activeTarget\"}\n";
 
   private EddiesAiClient()
   {
