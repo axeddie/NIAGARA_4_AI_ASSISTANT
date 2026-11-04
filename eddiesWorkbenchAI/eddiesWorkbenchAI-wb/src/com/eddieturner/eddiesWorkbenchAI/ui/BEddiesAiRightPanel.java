@@ -27,6 +27,7 @@ import javax.baja.ui.enums.BHalign;
 import javax.baja.ui.enums.BOrientation;
 import javax.baja.ui.enums.BValign;
 import javax.baja.ui.event.BKeyEvent;
+import javax.baja.ui.event.BWidgetEvent;
 import javax.baja.ui.pane.BBorderPane;
 import javax.baja.ui.pane.BEdgePane;
 import javax.baja.ui.pane.BGridPane;
@@ -70,6 +71,8 @@ public final class BEddiesAiRightPanel
   private String rawConversationText = "";
   private int lastWrappedColumns = -1;
   private BTextEditor promptEditor;
+  private BScrollPane promptScrollPane;
+  private boolean wrappingPrompt = false;
   private BLabel statusLabel;
 
   private BLabel pendingPlanLabel;
@@ -354,6 +357,8 @@ public final class BEddiesAiRightPanel
         {
           syncContextFromShell();
           promptEditor.setText(templateText);
+          wrapPromptEditorIfNeeded();
+          moveCaretToEnd(promptEditor);
           promptEditor.requestFocus();
         }
         return null;
@@ -494,10 +499,31 @@ public final class BEddiesAiRightPanel
         }
         super.keyPressed(event);
       }
+
+      @Override
+      public void fireTextModified(BWidgetEvent event)
+      {
+        super.fireTextModified(event);
+        if (!wrappingPrompt)
+        {
+          wrapPromptEditorIfNeeded();
+        }
+      }
     };
 
-    BScrollPane inputScroll = new BScrollPane(promptEditor);
-    BBorderPane inputBorder = new BBorderPane(inputScroll, BInsets.make(2.0));
+    promptScrollPane = new BScrollPane(promptEditor)
+    {
+      @Override
+      public void doLayout(BWidget[] kids)
+      {
+        if (!wrappingPrompt)
+        {
+          wrapPromptEditorIfNeeded();
+        }
+        super.doLayout(kids);
+      }
+    };
+    BBorderPane inputBorder = new BBorderPane(promptScrollPane, BInsets.make(2.0));
     inputBorder.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(180, 190, 205))));
     BBorderPane inputMargin = new BBorderPane(inputBorder, BInsets.make(0.0, 6.0, 4.0, 6.0));
 
@@ -961,6 +987,226 @@ public final class BEddiesAiRightPanel
         remaining = remaining.substring(breakIdx + 1);
       }
       firstLine = false;
+    }
+  }
+
+  private void wrapPromptEditorIfNeeded()
+  {
+    if (promptEditor == null || wrappingPrompt) return;
+    try
+    {
+      String text = promptEditor.getText();
+      if (text == null || text.isEmpty()) return;
+
+      int maxCols = computePromptWrapColumns();
+      if (maxCols <= 12) return;
+
+      // Fast check: only wrap if at least one line exceeds maxCols
+      boolean needsWrap = false;
+      int curLen = 0;
+      for (int i = 0; i < text.length(); i++)
+      {
+        char ch = text.charAt(i);
+        if (ch == '\n')
+        {
+          if (curLen > maxCols)
+          {
+            needsWrap = true;
+            break;
+          }
+          curLen = 0;
+        }
+        else if (ch != '\r')
+        {
+          curLen++;
+          if (curLen > maxCols)
+          {
+            needsWrap = true;
+            break;
+          }
+        }
+      }
+      if (!needsWrap) return;
+
+      Position caret = promptEditor.getCaretPosition();
+      int caretOffset = getLinearCaretOffset(text, caret);
+
+      StringBuilder sb = new StringBuilder(text.length() + 16);
+      int lineStart = 0;
+      for (int i = 0; i < text.length(); i++)
+      {
+        char c = text.charAt(i);
+        if (c == '\r')
+        {
+          if (i < caretOffset) caretOffset--;
+          continue;
+        }
+        sb.append(c);
+        if (c == '\n')
+        {
+          lineStart = sb.length();
+          continue;
+        }
+
+        int lineLen = sb.length() - lineStart;
+        if (lineLen > maxCols)
+        {
+          int breakPos = -1;
+          for (int k = sb.length() - 1; k > lineStart; k--)
+          {
+            if (sb.charAt(k) == ' ')
+            {
+              breakPos = k;
+              break;
+            }
+          }
+          if (breakPos > lineStart)
+          {
+            // Replace space with newline (same total char length, so caretOffset is unchanged)
+            sb.setCharAt(breakPos, '\n');
+            lineStart = breakPos + 1;
+          }
+          else
+          {
+            // Hard-break long word/ORD at maxCols
+            int splitIdx = lineStart + maxCols;
+            sb.insert(splitIdx, '\n');
+            if (caretOffset >= splitIdx)
+            {
+              caretOffset++;
+            }
+            lineStart = splitIdx + 1;
+          }
+        }
+      }
+
+      String wrapped = sb.toString();
+      if (!wrapped.equals(text))
+      {
+        wrappingPrompt = true;
+        try
+        {
+          promptEditor.setText(wrapped);
+          Position newCaret = linearOffsetToPosition(wrapped, caretOffset);
+          promptEditor.moveCaretPosition(newCaret);
+          promptEditor.scrollToVisible(newCaret);
+        }
+        finally
+        {
+          wrappingPrompt = false;
+        }
+      }
+    }
+    catch (Throwable ignore)
+    {
+      wrappingPrompt = false;
+    }
+  }
+
+  private int computePromptWrapColumns()
+  {
+    double availWidth = 0.0;
+    if (promptScrollPane != null && promptScrollPane.getWidth() > 80.0)
+    {
+      availWidth = promptScrollPane.getWidth();
+    }
+    else if (rootPane.getWidth() > 80.0)
+    {
+      availWidth = rootPane.getWidth() - 16.0;
+    }
+    else
+    {
+      availWidth = 370.0;
+    }
+
+    double charWidth = 7.2;
+    try
+    {
+      if (promptEditor != null && promptEditor.getRenderer() != null)
+      {
+        double cw = promptEditor.getRenderer().getColumnWidth(null, 0);
+        if (cw > 2.0)
+        {
+          charWidth = cw;
+        }
+      }
+    }
+    catch (Throwable ignore)
+    {
+    }
+
+    int cols = (int) ((availWidth - 28.0) / charWidth);
+    return Math.max(24, cols);
+  }
+
+  private static int getLinearCaretOffset(String text, Position pos)
+  {
+    if (text == null || pos == null) return 0;
+    int targetLine = Math.max(0, pos.line);
+    int targetCol = Math.max(0, pos.column);
+    int curLine = 0;
+    int curCol = 0;
+    for (int i = 0; i < text.length(); i++)
+    {
+      if (curLine == targetLine && curCol == targetCol)
+      {
+        return i;
+      }
+      char ch = text.charAt(i);
+      if (ch == '\n')
+      {
+        if (curLine == targetLine)
+        {
+          return i;
+        }
+        curLine++;
+        curCol = 0;
+      }
+      else if (ch != '\r')
+      {
+        curCol++;
+      }
+    }
+    return text.length();
+  }
+
+  private static Position linearOffsetToPosition(String text, int offset)
+  {
+    if (text == null || text.isEmpty() || offset <= 0)
+    {
+      return new Position(0, 0);
+    }
+    int clamped = Math.min(offset, text.length());
+    int line = 0;
+    int col = 0;
+    for (int i = 0; i < clamped; i++)
+    {
+      char ch = text.charAt(i);
+      if (ch == '\n')
+      {
+        line++;
+        col = 0;
+      }
+      else if (ch != '\r')
+      {
+        col++;
+      }
+    }
+    return new Position(line, col);
+  }
+
+  private static void moveCaretToEnd(BTextEditor editor)
+  {
+    try
+    {
+      String text = editor.getText();
+      if (text == null) return;
+      Position endPos = linearOffsetToPosition(text, text.length());
+      editor.moveCaretPosition(endPos);
+      editor.scrollToVisible(endPos);
+    }
+    catch (Throwable ignore)
+    {
     }
   }
 

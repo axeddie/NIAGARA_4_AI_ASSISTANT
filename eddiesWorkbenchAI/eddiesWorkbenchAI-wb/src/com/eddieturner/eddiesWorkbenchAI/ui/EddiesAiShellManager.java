@@ -57,6 +57,14 @@ public final class EddiesAiShellManager
     }
     watcherStarted = true;
 
+    try
+    {
+      EddiesAiHomePageCustomizer.customizeAboutHtml();
+    }
+    catch (Throwable ignore)
+    {
+    }
+
     Thread watcher = new Thread(new Runnable()
     {
       @Override
@@ -231,6 +239,8 @@ public final class EddiesAiShellManager
     wbPane.relayoutSync();
     wbPane.relayout();
     wbPane.repaint();
+
+    EddiesAiHomePageCustomizer.installAndRefresh(shell);
 
     LOG.info("Docked Eddie's AI Assistant right-side panel into Workbench shell.");
     return state;
