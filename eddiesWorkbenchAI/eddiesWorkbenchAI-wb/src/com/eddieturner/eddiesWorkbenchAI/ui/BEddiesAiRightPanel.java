@@ -66,6 +66,9 @@ public final class BEddiesAiRightPanel
   private BCheckBox includeSelectionCheck;
   private BCheckBox autoApplyCheck;
   private BTextEditor conversationEditor;
+  private BScrollPane conversationScrollPane;
+  private String rawConversationText = "";
+  private int lastWrappedColumns = -1;
   private BTextEditor promptEditor;
   private BLabel statusLabel;
 
@@ -367,10 +370,24 @@ public final class BEddiesAiRightPanel
 
     conversationEditor = new BTextEditor("", false);
     conversationEditor.setAllowCopying(true);
+
+    conversationScrollPane = new BScrollPane(conversationEditor)
+    {
+      @Override
+      public void doLayout(BWidget[] kids)
+      {
+        int cols = computeWrapColumns();
+        if (cols != lastWrappedColumns && rawConversationText != null && !rawConversationText.isEmpty())
+        {
+          lastWrappedColumns = cols;
+          conversationEditor.setText(wordWrapText(rawConversationText, cols));
+        }
+        super.doLayout(kids);
+      }
+    };
     resetConversation();
 
-    BScrollPane scrollPane = new BScrollPane(conversationEditor);
-    BBorderPane scrollWrapper = new BBorderPane(scrollPane, BInsets.make(0.0, 6.0, 4.0, 6.0));
+    BBorderPane scrollWrapper = new BBorderPane(conversationScrollPane, BInsets.make(0.0, 6.0, 4.0, 6.0));
 
     BEdgePane pane = new BEdgePane();
     pane.setTop(header);
@@ -536,20 +553,12 @@ public final class BEddiesAiRightPanel
     welcome.append("========================================\n");
     welcome.append("  Eddie's Workbench AI (Company Copilot)\n");
     welcome.append("========================================\n\n");
-    welcome.append("Connected to your Company AI / Copilot Gateway\n");
-    welcome.append("(https://aoai-farm.bosch-temp.com).\n\n");
+    welcome.append("Connected to your Company AI / Copilot Gateway (https://aoai-farm.bosch-temp.com).\n\n");
     welcome.append("What you can do:\n");
-    welcome.append(" 1. Ask questions about the active WireSheet,\n");
-    welcome.append("    component properties, links, or PX view.\n");
-    welcome.append(" 2. Give instructions to modify the station\n");
-    welcome.append("    (e.g., 'Create two NumericWritables Input1\n");
-    welcome.append("    and Input2, add an Add block, and link them\n");
-    welcome.append("    to a Result NumericWritable').\n");
-    welcome.append(" 3. Click 'Account' in the top-right header to\n");
-    welcome.append("    set your Subscription Key, import it from\n");
-    welcome.append("    an active StationBuilder Program block, or\n");
-    welcome.append("    sign in with Microsoft 365 Work SSO.\n");
-    conversationEditor.setText(welcome.toString());
+    welcome.append(" 1. Ask questions about the active WireSheet, component properties, links, or PX view.\n");
+    welcome.append(" 2. Give instructions to modify the station (e.g., 'Create two NumericWritables Input1 and Input2, add an Add block, and link them to a Result NumericWritable').\n");
+    welcome.append(" 3. Click 'Account' in the top-right header to set your Subscription Key, import it from an active StationBuilder Program block, or sign in with Microsoft 365 Work SSO.\n");
+    setConversationRawText(welcome.toString(), false);
   }
 
   public void refreshAuthBadge()
@@ -558,6 +567,7 @@ public final class BEddiesAiRightPanel
     try
     {
       EddiesAiConfig cfg = EddiesAiConfig.get();
+      cfg.load();
       String domain = cfg.getModelFarmDomain();
       boolean hasKey = !cfg.getModelFarmApiKey().isEmpty();
       boolean hasSso = cfg.isCopilotSignedIn();
@@ -623,6 +633,19 @@ public final class BEddiesAiRightPanel
     final String prompt = rawText.trim();
     promptEditor.setText("");
 
+    if (prompt.regionMatches(true, 0, "/key ", 0, 5))
+    {
+      String newKey = prompt.substring(5).trim();
+      EddiesAiConfig.get().setModelFarmApiKey(newKey);
+      EddiesAiConfig.get().save();
+      refreshAuthBadge();
+      if (statusLabel != null)
+      {
+        statusLabel.setText("Saved Model Farm Subscription API Key!");
+      }
+      return;
+    }
+
     if (autoApplyCheck != null)
     {
       EddiesAiConfig.get().setAutoApplyChanges(autoApplyCheck.isSelected());
@@ -641,7 +664,7 @@ public final class BEddiesAiRightPanel
       ? lastSyncedTarget.fullContextPromptBlock
       : "";
 
-    StringBuilder log = new StringBuilder(conversationEditor.getText());
+    StringBuilder log = new StringBuilder(rawConversationText);
     if (log.length() > 0 && log.charAt(log.length() - 1) != '\n')
     {
       log.append("\n");
@@ -655,8 +678,7 @@ public final class BEddiesAiRightPanel
     log.append(prompt).append("\n\n");
     log.append("Working... Waiting for Company AI Platform (").append(selectedModel).append(")...\n");
 
-    conversationEditor.setText(log.toString());
-    scrollToBottom(conversationEditor);
+    setConversationRawText(log.toString(), true);
 
     if (statusLabel != null)
     {
@@ -705,7 +727,7 @@ public final class BEddiesAiRightPanel
     List<Map<String, String>> extractedPlan = StationActionExecutor.extractActionPlan(responseText);
     String cleanDisplay = StationActionExecutor.stripActionTagsForDisplay(responseText);
 
-    String currentText = removeWorkingPlaceholder(conversationEditor.getText());
+    String currentText = removeWorkingPlaceholder(rawConversationText);
     StringBuilder log = new StringBuilder(currentText);
     log.append("[").append(timestamp).append("] AI (").append(usedModel).append("):\n");
     log.append(cleanDisplay).append("\n");
@@ -727,8 +749,7 @@ public final class BEddiesAiRightPanel
       }
     }
 
-    conversationEditor.setText(log.toString());
-    scrollToBottom(conversationEditor);
+    setConversationRawText(log.toString(), true);
     updateActionButtonsState();
 
     if (statusLabel != null)
@@ -740,13 +761,12 @@ public final class BEddiesAiRightPanel
   private void handleAiError(String errorMessage)
   {
     String timestamp = new SimpleDateFormat("HH:mm:ss").format(new Date());
-    String currentText = removeWorkingPlaceholder(conversationEditor.getText());
+    String currentText = removeWorkingPlaceholder(rawConversationText);
     StringBuilder log = new StringBuilder(currentText);
     log.append("[").append(timestamp).append("] Error:\n");
     log.append(errorMessage).append("\n");
 
-    conversationEditor.setText(log.toString());
-    scrollToBottom(conversationEditor);
+    setConversationRawText(log.toString(), true);
 
     if (statusLabel != null)
     {
@@ -790,14 +810,158 @@ public final class BEddiesAiRightPanel
   private void appendSystemLog(String text)
   {
     if (conversationEditor == null) return;
-    StringBuilder sb = new StringBuilder(conversationEditor.getText());
+    StringBuilder sb = new StringBuilder(rawConversationText);
     if (sb.length() > 0 && sb.charAt(sb.length() - 1) != '\n')
     {
       sb.append("\n");
     }
     sb.append("\n").append(text).append("\n");
-    conversationEditor.setText(sb.toString());
-    scrollToBottom(conversationEditor);
+    setConversationRawText(sb.toString(), true);
+  }
+
+  private void setConversationRawText(String rawText, boolean scrollBottom)
+  {
+    this.rawConversationText = (rawText != null) ? rawText : "";
+    if (conversationEditor == null) return;
+    int cols = computeWrapColumns();
+    this.lastWrappedColumns = cols;
+    conversationEditor.setText(wordWrapText(this.rawConversationText, cols));
+    if (scrollBottom)
+    {
+      scrollToBottom(conversationEditor);
+    }
+  }
+
+  private int computeWrapColumns()
+  {
+    double availWidth = 0.0;
+    if (conversationScrollPane != null && conversationScrollPane.getWidth() > 80.0)
+    {
+      availWidth = conversationScrollPane.getWidth();
+    }
+    else if (rootPane.getWidth() > 80.0)
+    {
+      availWidth = rootPane.getWidth() - 16.0;
+    }
+    else
+    {
+      availWidth = 370.0;
+    }
+
+    double charWidth = 7.2;
+    try
+    {
+      if (conversationEditor != null && conversationEditor.getRenderer() != null)
+      {
+        double cw = conversationEditor.getRenderer().getColumnWidth(null, 0);
+        if (cw > 2.0)
+        {
+          charWidth = cw;
+        }
+      }
+    }
+    catch (Throwable ignore)
+    {
+    }
+
+    // Reserve ~28px for vertical scrollbar and internal margins
+    int cols = (int) ((availWidth - 28.0) / charWidth);
+    return Math.max(28, cols);
+  }
+
+  private static String wordWrapText(String text, int maxCols)
+  {
+    if (text == null || text.isEmpty() || maxCols <= 10) return text != null ? text : "";
+    StringBuilder out = new StringBuilder(text.length() + 128);
+    String[] lines = text.split("\n", -1);
+    for (int i = 0; i < lines.length; i++)
+    {
+      String line = lines[i];
+      if (line.endsWith("\r"))
+      {
+        line = line.substring(0, line.length() - 1);
+      }
+
+      if (line.length() <= maxCols)
+      {
+        out.append(line);
+      }
+      else if (isDividerLine(line))
+      {
+        out.append(line.substring(0, maxCols));
+      }
+      else
+      {
+        wrapSingleParagraph(line, maxCols, out);
+      }
+
+      if (i < lines.length - 1)
+      {
+        out.append('\n');
+      }
+    }
+    return out.toString();
+  }
+
+  private static boolean isDividerLine(String s)
+  {
+    if (s.length() < 8) return false;
+    char first = s.charAt(0);
+    if (first != '=' && first != '-' && first != '*') return false;
+    for (int i = 1; i < s.length(); i++)
+    {
+      if (s.charAt(i) != first) return false;
+    }
+    return true;
+  }
+
+  private static void wrapSingleParagraph(String line, int maxCols, StringBuilder out)
+  {
+    // Preserve leading indentation (and list prefix spacing) up to 6 spaces on wrapped lines
+    int indentLen = 0;
+    while (indentLen < line.length() && indentLen < 6 && line.charAt(indentLen) == ' ')
+    {
+      indentLen++;
+    }
+    String contIndent = "";
+    if (line.startsWith(" 1. ") || line.startsWith(" 2. ") || line.startsWith(" 3. ")
+        || line.startsWith(" - ") || line.startsWith(" * "))
+    {
+      contIndent = "    ";
+    }
+    else if (indentLen > 0)
+    {
+      StringBuilder ind = new StringBuilder(indentLen);
+      for (int k = 0; k < indentLen; k++) ind.append(' ');
+      contIndent = ind.toString();
+    }
+
+    String remaining = line;
+    boolean firstLine = true;
+    while (!remaining.isEmpty())
+    {
+      String prefix = firstLine ? "" : contIndent;
+      int limit = Math.max(12, maxCols - prefix.length());
+      if (remaining.length() <= limit)
+      {
+        out.append(prefix).append(remaining);
+        break;
+      }
+
+      int breakIdx = remaining.lastIndexOf(' ', limit);
+      if (breakIdx <= (firstLine ? indentLen : 0))
+      {
+        // Hard-break a single long token (like a long ORD or URL)
+        out.append(prefix).append(remaining.substring(0, limit)).append('\n');
+        remaining = remaining.substring(limit);
+      }
+      else
+      {
+        out.append(prefix).append(remaining.substring(0, breakIdx)).append('\n');
+        remaining = remaining.substring(breakIdx + 1);
+      }
+      firstLine = false;
+    }
   }
 
   private static String removeWorkingPlaceholder(String text)

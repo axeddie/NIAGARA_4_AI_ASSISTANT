@@ -318,6 +318,6 @@ public final class EddiesAiSettingsDialog
     dlg.setResizable(true);
     dlg.computePreferredSize();
     dlg.setBoundsCenteredOnOwner();
-    dlg.setVisible(true);
+    dlg.open();
   }
 }
