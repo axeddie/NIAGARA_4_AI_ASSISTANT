@@ -7,8 +7,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import javax.baja.file.BIFile;
+import javax.baja.file.BSubSpaceFile;
 import javax.baja.naming.BOrd;
 import javax.baja.naming.OrdTarget;
+import javax.baja.space.BComponentSpace;
+import javax.baja.space.BSpace;
 import javax.baja.space.Mark;
 import javax.baja.status.BStatusValue;
 import javax.baja.sys.Action;
@@ -70,6 +73,65 @@ public final class StationContextExtractor
   }
 
   /**
+   * Fast, zero-disk-IO summary extraction for UI badge updates when the active view changes.
+   * Does NOT build the full 15,000-character context prompt block or read file contents.
+   */
+  public static String extractLightweightSummary(BWbShell shell)
+  {
+    if (shell == null) return "None";
+    try
+    {
+      BOrd activeOrd = shell.getActiveOrd();
+      BWbView activeView = shell.getActiveView();
+      BObject curVal = (activeView != null) ? activeView.getCurrentValue() : null;
+      BComponent targetComp = null;
+      BIFile pxFile = null;
+
+      if (activeView instanceof BWbPxView)
+      {
+        try { pxFile = ((BWbPxView) activeView).getPxFile(); } catch (Throwable ignore) {}
+      }
+      if (curVal instanceof BIFile && pxFile == null)
+      {
+        pxFile = (BIFile) curVal;
+      }
+      if (curVal instanceof BComponent)
+      {
+        targetComp = (BComponent) curVal;
+      }
+      else if (curVal instanceof BComplex)
+      {
+        targetComp = ((BComplex) curVal).getParentComponent();
+      }
+
+      if (targetComp != null)
+      {
+        String compName = targetComp.getName();
+        if (compName == null || compName.isEmpty()) compName = targetComp.getType().getTypeName();
+        BSubSpaceFile backingBog = getBackingSubSpaceFile(targetComp);
+        String modeSuffix = (backingBog != null) ? " [Offline BOG: " + backingBog.getFileName() + "]" : "";
+        return compName + " [" + targetComp.getType().toString() + "]" + modeSuffix;
+      }
+      if (pxFile != null)
+      {
+        String ext = pxFile.getExtension();
+        String extBadge = (ext != null && !ext.isEmpty()) ? ext.toUpperCase() + " File" : "File";
+        return pxFile.getFileName() + " [" + extBadge + "]";
+      }
+      String ordStr = (activeOrd != null) ? activeOrd.toString() : "None";
+      if (ordStr.length() > 38)
+      {
+        return "..." + ordStr.substring(ordStr.length() - 35);
+      }
+      return ordStr;
+    }
+    catch (Throwable ignore)
+    {
+      return "None";
+    }
+  }
+
+  /**
    * Inspects the active Workbench shell and builds a complete StationTarget snapshot.
    */
   public static StationTarget extract(BWbShell shell)
@@ -104,11 +166,7 @@ public final class StationContextExtractor
       BObject curVal = (activeView != null) ? activeView.getCurrentValue() : null;
       if (curVal instanceof BIFile && pxFile == null)
       {
-        BIFile f = (BIFile) curVal;
-        if ("px".equalsIgnoreCase(f.getExtension()))
-        {
-          pxFile = f;
-        }
+        pxFile = (BIFile) curVal;
       }
 
       if (curVal instanceof BComponent)
@@ -120,7 +178,7 @@ public final class StationContextExtractor
         targetComp = ((BComplex) curVal).getParentComponent();
       }
 
-      if (targetComp == null && activeOrd != null)
+      if (activeOrd != null)
       {
         try
         {
@@ -128,13 +186,20 @@ public final class StationContextExtractor
           if (resolved != null)
           {
             BObject obj = resolved.get();
-            if (obj instanceof BComponent)
+            if (targetComp == null)
             {
-              targetComp = (BComponent) obj;
+              if (obj instanceof BComponent)
+              {
+                targetComp = (BComponent) obj;
+              }
+              else if (resolved.getComponent() != null)
+              {
+                targetComp = resolved.getComponent();
+              }
             }
-            else if (resolved.getComponent() != null)
+            if (pxFile == null && obj instanceof BIFile)
             {
-              targetComp = resolved.getComponent();
+              pxFile = (BIFile) obj;
             }
           }
         }
@@ -142,6 +207,21 @@ public final class StationContextExtractor
       }
 
       selectedComps = extractSelectedComponents(activeView);
+
+      // If the active target is an offline .bog file (BSubSpaceFile) directly, open/resolve its root BComponent
+      if (targetComp == null && pxFile instanceof BSubSpaceFile)
+      {
+        try
+        {
+          BSubSpaceFile ssf = (BSubSpaceFile) pxFile;
+          BSpace space = ssf.isOpen() ? ssf.getSubSpace() : ssf.open();
+          if (space instanceof BComponentSpace)
+          {
+            targetComp = ((BComponentSpace) space).getRootComponent();
+          }
+        }
+        catch (Throwable ignore) {}
+      }
 
       // Opportunistically check if a Program component with Model Farm credentials is visible
       // and EddiesAiConfig does not yet have a key configured
@@ -166,7 +246,9 @@ public final class StationContextExtractor
     {
       String compName = targetComp.getName();
       if (compName == null || compName.isEmpty()) compName = targetComp.getType().getTypeName();
-      summaryLabel = compName + " [" + targetComp.getType().toString() + "]";
+      BSubSpaceFile backingBog = getBackingSubSpaceFile(targetComp);
+      String modeSuffix = (backingBog != null) ? " [Offline BOG: " + backingBog.getFileName() + "]" : "";
+      summaryLabel = compName + " [" + targetComp.getType().toString() + "]" + modeSuffix;
       if (!selectedComps.isEmpty())
       {
         summaryLabel += " (+" + selectedComps.size() + " sel)";
@@ -174,7 +256,9 @@ public final class StationContextExtractor
     }
     else if (pxFile != null)
     {
-      summaryLabel = pxFile.getFileName() + " [PX Graphic]";
+      String ext = pxFile.getExtension();
+      String extBadge = (ext != null && !ext.isEmpty()) ? ext.toUpperCase() + " File" : "File";
+      summaryLabel = pxFile.getFileName() + " [" + extBadge + "]";
     }
 
     String promptBlock = buildPromptBlock(activeOrd, activeView, targetComp, pxFile, selectedComps);
@@ -309,6 +393,23 @@ public final class StationContextExtractor
     return list;
   }
 
+  public static BSubSpaceFile getBackingSubSpaceFile(BComponent comp)
+  {
+    if (comp == null) return null;
+    try
+    {
+      BComponentSpace cs = comp.getComponentSpace();
+      if (cs != null && cs.getNavParent() instanceof BSubSpaceFile)
+      {
+        return (BSubSpaceFile) cs.getNavParent();
+      }
+    }
+    catch (Throwable ignore)
+    {
+    }
+    return null;
+  }
+
   private static String buildPromptBlock(
     BOrd activeOrd,
     BWbView activeView,
@@ -326,6 +427,16 @@ public final class StationContextExtractor
 
     if (targetComp != null)
     {
+      BSubSpaceFile backingBog = getBackingSubSpaceFile(targetComp);
+      if (backingBog != null)
+      {
+        sb.append("Database Mode: OFFLINE BOG DATABASE (")
+          .append(String.valueOf(backingBog.getFilePath())).append(")\n");
+      }
+      else
+      {
+        sb.append("Database Mode: LIVE CONNECTED STATION\n");
+      }
       BOrd slotOrd = targetComp.getSlotPathOrd();
       sb.append("Target Component Name: ").append(safeName(targetComp)).append("\n");
       sb.append("Target Component Type: ").append(targetComp.getType().toString()).append("\n");
@@ -498,17 +609,24 @@ public final class StationContextExtractor
       }
     }
 
-    // PX Graphic File Content if viewing/editing a PX graphic
-    if (pxFile != null)
+    // Active File Content if viewing/editing a PX graphic, BOG file, or Workbench file
+    if (pxFile != null && !(pxFile instanceof BSubSpaceFile && targetComp != null))
     {
       try
       {
-        sb.append("\n--- Active PX Graphic File (").append(pxFile.getFilePath()).append(") ---\n");
-        byte[] bytes = pxFile.read();
-        if (bytes != null && bytes.length > 0)
+        BOrd absOrd = null;
+        try { absOrd = pxFile.getAbsoluteOrd(); } catch (Throwable ignore) {}
+        sb.append("\n--- Active Workbench File (")
+          .append(absOrd != null ? absOrd.toString() : String.valueOf(pxFile.getFilePath()))
+          .append(") ---\n");
+        if (!pxFile.isDirectory())
         {
-          String xml = new String(bytes, StandardCharsets.UTF_8);
-          sb.append(abbreviateText(xml, 8000)).append("\n");
+          byte[] bytes = pxFile.read();
+          if (bytes != null && bytes.length > 0)
+          {
+            String textContent = new String(bytes, StandardCharsets.UTF_8);
+            sb.append(abbreviateText(textContent, 14000)).append("\n");
+          }
         }
       }
       catch (Throwable ignore)

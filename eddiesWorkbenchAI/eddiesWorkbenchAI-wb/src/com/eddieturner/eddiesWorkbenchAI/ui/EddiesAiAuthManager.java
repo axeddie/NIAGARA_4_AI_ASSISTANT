@@ -606,6 +606,11 @@ public final class EddiesAiAuthManager
     }
   }
 
+  public static void openBrowserUrl(String url) throws Exception
+  {
+    openBrowser(url);
+  }
+
   private static void openBrowser(String url) throws Exception
   {
     if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))

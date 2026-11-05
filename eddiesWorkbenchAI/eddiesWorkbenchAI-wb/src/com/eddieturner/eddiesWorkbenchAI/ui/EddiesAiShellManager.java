@@ -74,7 +74,12 @@ public final class EddiesAiShellManager
         {
           try
           {
-            Thread.sleep(500L);
+            long sleepMs = SHELL_STATES.isEmpty() ? 600L : 2500L;
+            Thread.sleep(sleepMs);
+            if (!hasUninstalledShells())
+            {
+              continue;
+            }
             SwingUtilities.invokeLater(new Runnable()
             {
               @Override
@@ -104,6 +109,28 @@ public final class EddiesAiShellManager
     watcher.setDaemon(true);
     watcher.setPriority(Thread.MIN_PRIORITY);
     watcher.start();
+  }
+
+  private static boolean hasUninstalledShells()
+  {
+    try
+    {
+      BWidgetApplication app = BWidget.getApplication();
+      if (app == null) return false;
+      BWidgetShell[] shells = app.getShells();
+      if (shells == null) return false;
+      for (int i = 0; i < shells.length; i++)
+      {
+        if (shells[i] instanceof BWbShell && !SHELL_STATES.containsKey((BWbShell) shells[i]))
+        {
+          return true;
+        }
+      }
+    }
+    catch (Throwable ignore)
+    {
+    }
+    return false;
   }
 
   /**
@@ -160,6 +187,7 @@ public final class EddiesAiShellManager
     if (state == null) return;
 
     state.dockPane.setVisible(visible);
+    state.aiPanel.setPanelVisible(visible);
     if (state.toggleCommand != null && state.toggleCommand.isSelected() != visible)
     {
       state.toggleCommand.setSelected(visible);
@@ -207,19 +235,19 @@ public final class EddiesAiShellManager
     });
 
     BBorderPane panelWrapper = new BBorderPane(aiPanel.getWidget(), BInsets.make(0.0));
-    panelWrapper.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(185, 195, 210))));
-    panelWrapper.setFill(BBrush.makeSolid(BColor.make(252, 253, 255)));
+    panelWrapper.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(22, 46, 84))));
+    panelWrapper.setFill(BBrush.makeSolid(BColor.make(7, 17, 34)));
 
     // Create the resizable dock container with a draggable splitter bar on its left edge.
     // Docking into wbPane.setRight(...) avoids unparenting any running JavaFX/Swing views in wbPane.getCenter().
-    final BResizableDockPane dockPane = new BResizableDockPane(wbPane, panelWrapper, 380.0);
+    final BResizableDockPane dockPane = new BResizableDockPane(wbPane, panelWrapper, 400.0);
     dockPane.setVisible(true);
     wbPane.setRight(dockPane);
 
     // Add an "Eddie's AI" toggle button to the right end of the Workbench toolbar row
     ToggleCommand toggleCmd = installToolbarToggleButton(wbPane, shell);
 
-    // Sync context when user activity occurs in the shell
+    // Lightly check if the active ORD/view changed when user activity occurs in the shell
     shell.addActivityListener(new BWbShell.ActivityListener()
     {
       @Override
@@ -227,7 +255,7 @@ public final class EddiesAiShellManager
       {
         if (dockPane.isVisible())
         {
-          aiPanel.syncContextFromShell();
+          aiPanel.onShellActivity();
         }
       }
     });
@@ -351,9 +379,9 @@ public final class EddiesAiShellManager
   private static final class BLeftResizeHandle extends BWidget
   {
     private static final double BAR_WIDTH = 6.0;
-    private static final BBrush BG_NORMAL = BBrush.makeSolid(BColor.make(222, 228, 236));
-    private static final BBrush BG_ACTIVE = BBrush.makeSolid(BColor.make(175, 198, 230));
-    private static final BBrush GRIP_BRUSH = BBrush.makeSolid(BColor.make(120, 132, 150));
+    private static final BBrush BG_NORMAL = BBrush.makeSolid(BColor.make(16, 34, 64));
+    private static final BBrush BG_ACTIVE = BBrush.makeSolid(BColor.make(0, 150, 199));
+    private static final BBrush GRIP_BRUSH = BBrush.makeSolid(BColor.make(92, 225, 230));
 
     private final BEdgePane wbPane;
     private final BResizableDockPane dockPane;
@@ -431,11 +459,13 @@ public final class EddiesAiShellManager
       if (!dragging) return;
       Point ptInWb = translateToAncestor(wbPane, new Point(event.getX(), event.getY()));
       double deltaX = dragStartMouseX - ptInWb.x;
+      double oldW = dockPane.getDockWidth();
       dockPane.setDockWidth(dragStartWidth + deltaX);
-      dockPane.relayout();
-      wbPane.relayoutSync();
-      wbPane.relayout();
-      wbPane.repaint();
+      if (Math.abs(dockPane.getDockWidth() - oldW) >= 2.0)
+      {
+        wbPane.relayout();
+        wbPane.repaint();
+      }
     }
 
     @Override

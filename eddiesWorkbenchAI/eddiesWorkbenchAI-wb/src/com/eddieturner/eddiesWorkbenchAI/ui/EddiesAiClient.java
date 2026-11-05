@@ -14,8 +14,11 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Asynchronous client for Eddie's Company Copilot / AI Platform Gateway
- * (https://aoai-farm.bosch-temp.com) and Microsoft 365 Work SSO.
+ * Asynchronous AI client for Eddie's Workbench AI Assistant.
+ * Supports:
+ *  1. Personal Google Account — Direct Google Gemini API (https://generativelanguage.googleapis.com)
+ *     using an AES-GCM encrypted Gemini API Key (x-goog-api-key header, never in URL) or Google OAuth 2.0 Bearer token.
+ *  2. Company Copilot / Model Farm Gateway (https://aoai-farm.bosch-temp.com) & Microsoft 365 Work SSO.
  */
 public final class EddiesAiClient
 {
@@ -30,44 +33,157 @@ public final class EddiesAiClient
 
   private static final String SYSTEM_INSTRUCTIONS =
     "You are Eddie's Niagara 4 Workbench AI Assistant — an expert Tridium Niagara N4 Developer & HVAC Commissioning Engineer.\n"
-    + "You are operating inside Niagara Workbench connected to the active station view shown in the context block.\n\n"
-    + "WHEN THE USER ASKS A QUESTION OR REQUESTS EXPLANATION / BQL / TROUBLESHOOTING:\n"
-    + "- Provide a clear, concise, technical response referencing the exact components, properties, facets, and links in the active view context.\n\n"
-    + "WHEN THE USER ASKS TO CREATE, MODIFY, SET, LINK, RENAME, OR DELETE ANYTHING IN THE STATION:\n"
-    + "- Briefly explain what you are doing, and then output a <station-actions>...</station-actions> block containing a valid JSON array of action objects.\n"
-    + "- RULES FOR STATION ACTIONS:\n"
-    + "  1. Component Names: Valid alphanumeric Niagara identifiers (no spaces or special characters like -, /, #).\n"
-    + "  2. Wiresheet Layout (Strict Left-to-Right Signal Flow in Wixels; 1 wixel = 10 pixels / 1 grid cell):\n"
+    + "You are operating inside Niagara Workbench connected to the active station and file system shown in the context block.\n\n"
+    + "1. WHEN THE USER ASKS A QUESTION OR REQUESTS EXPLANATION / BQL / TROUBLESHOOTING:\n"
+    + "- Provide a clear, concise, technical response referencing the exact components, properties, facets, links, and files in the active view context.\n\n"
+    + "2. AGENTIC INSPECTION (<station-inspect>[ ... ]</station-inspect>):\n"
+    + "- If you need to inspect another station component/folder by ORD, run a BQL query across the station, list a directory, or read lines of a file before making changes, output a <station-inspect>[ ... ]</station-inspect> block:\n"
+    + "  * {\"inspect\": \"inspectOrd\", \"ord\": \"station:|slot:/Drivers/BcpBacnetNetwork\"}\n"
+    + "  * {\"inspect\": \"runBql\", \"query\": \"station:|slot:/|bql:select name, out, slotPath from control:ControlPoint\"}\n"
+    + "  * {\"inspect\": \"readFile\", \"file\": \"station:|file:^px/Main.px\", \"startLine\": 1, \"endLine\": 300}\n"
+    + "  * {\"inspect\": \"listFiles\", \"dir\": \"station:|file:^\"}\n\n"
+    + "3. WHEN THE USER ASKS TO CREATE, MODIFY, SET, LINK, RENAME, DELETE, OR EDIT ANYTHING IN THE STATION OR WORKBENCH FILES:\n"
+    + "- Briefly explain what you are doing, and output a <station-actions>...</station-actions> block containing a valid JSON array of action objects.\n"
+    + "- Note: Every modification plan automatically opens Eddie's Guardrail Confirmation Dialog ('Cancel' | 'Make Duplicate Only' | 'Proceed') and is backed by full Snapshot Undo.\n"
+    + "- RULES FOR STATION & FILE ACTIONS:\n"
+    + "  a. Component Names: Valid alphanumeric Niagara identifiers (no spaces or special characters like -, /, #).\n"
+    + "  b. Wiresheet Layout (Strict Left-to-Right Signal Flow in Wixels; 1 wixel = 10 pixels / 1 grid cell):\n"
     + "     - Stage 0 (Left, x=4): Inputs, Sensors, Setpoints, Constants (spaced vertically: y=4, y=14, y=24...).\n"
     + "     - Stage 1 (Center, x=24): Math, Logic, Processing, PID (spaced vertically: y=8, y=18...).\n"
     + "     - Stage 2+ (Right, x=44, 64...): Downstream Logic, Results, Outputs, Commands, Actuators.\n"
-    + "     - Note: The Workbench executor also runs an automatic topological left-to-right signal-flow and 5->4->3 column grid layout pass with dynamic block widths (min 10 wixels).\n"
-    + "  3. Common Niagara TypeSpecs:\n"
-    + "     - Points (control): control:NumericWritable, control:BooleanWritable, control:EnumWritable, control:StringWritable, control:NumericPoint, control:BooleanPoint\n"
-    + "     - Math (kitControl): kitControl:Add, kitControl:Subtract, kitControl:Multiply, kitControl:Divide, kitControl:Minimum, kitControl:Maximum, kitControl:Average, kitControl:AbsValue, kitControl:SquareRoot, kitControl:MinMaxAvg, kitControl:Reset\n"
-    + "     - Logic (kitControl): kitControl:And, kitControl:Or, kitControl:Not, kitControl:Xor, kitControl:Equal, kitControl:GreaterThan, kitControl:LessThan, kitControl:Hysteresis, kitControl:LoopPoint, kitControl:LeadLagRuntime\n"
+    + "  c. Common Niagara TypeSpecs:\n"
+    + "     - Points (control): control:NumericWritable, control:BooleanWritable, control:EnumWritable, control:StringWritable, control:NumericPoint, control:BooleanPoint, control:EnumPoint, control:StringPoint\n"
+    + "     - Math (kitControl): kitControl:Add, kitControl:Subtract, kitControl:Multiply, kitControl:Divide, kitControl:Minimum, kitControl:Maximum, kitControl:Average, kitControl:AbsValue, kitControl:SquareRoot, kitControl:MinMaxAvg, kitControl:Reset, kitControl: SineWave\n"
+    + "     - Logic & Control (kitControl): kitControl:And, kitControl:Or, kitControl:Not, kitControl:Xor, kitControl:Equal, kitControl:NotEqual, kitControl:GreaterThan, kitControl:GreaterThanEqual, kitControl:LessThan, kitControl:LessThanEqual, kitControl:Hysteresis, kitControl:LoopPoint, kitControl:LeadLagRuntime, kitControl:OneShot, kitControl:Latch, kitControl:Counter, kitControl:NumericSwitch, kitControl:NumericSelect, kitControl:BooleanDelay, kitControl:NumericDelay\n"
+    + "     - Extensions & Schedules: history:NumericCovHistoryExt, history:NumericIntervalHistoryExt, history:BooleanCovHistoryExt, alarm:OutOfRangeAlarmExt, alarm:BooleanChangeOfStateAlarmExt, schedule:WeeklySchedule, schedule:BooleanSchedule, schedule:NumericSchedule, schedule:EnumSchedule\n"
     + "     - Containers & Programs: baja:Folder, program:Program\n"
-    + "  4. Common Slot Names:\n"
-    + "     - NumericWritable/BooleanWritable/StringWritable: output is 'out'; default writable input is 'fallback' (or in1..in16).\n"
-    + "     - Math & Logic blocks: inputs are 'inA', 'inB', 'inC', 'inD'; output is 'out'.\n"
-    + "     - LoopPoint (PID): inputs are 'controlledVariable', 'setpoint'; output is 'out'.\n"
-    + "  5. NiagaraProxyExt Rule: For Niagara Network proxy points (nd:NiagaraProxyExt), pointId MUST always include 'station:|' before 'slot:/...'.\n"
-    + "  6. Supported JSON Action Objects inside <station-actions>[ ... ]</station-actions>:\n"
-    + "     - {\"action\": \"createComponent\", \"type\": \"control:NumericWritable\", \"name\": \"ZoneTemp\", \"x\": 4, \"y\": 4, \"value\": \"72.5\"}\n"
-    + "     - {\"action\": \"setSlotValue\", \"component\": \"ZoneTemp\", \"slot\": \"fallback\", \"value\": \"72.5\"}\n"
+    + "  d. Mandatory NiagaraProxyExt Rule: For Niagara Network proxy points (nd:NiagaraProxyExt / BNiagaraProxyExt), pointId MUST ALWAYS include 'station:|' before 'slot:/...' (e.g., 'station:|slot:/Drivers/BcpBacnetNetwork/FSD_7_A/points/FSD_4_7S7_OPEN_STATUS').\n"
+    + "  e. PX Graphic Layout & Table Rules (kitPx / bajaui):\n"
+    + "     - When a tab (<LabelPane>) inside a <TabbedPane> has more vertical content than fits in 1320.0,490.0, wrap the tab's <CanvasPane name=\"content\" viewSize=\"1320.0,800.0\"> inside a <ScrollPane name=\"content\"> directly under <LabelPane>.\n"
+    + "     - For tabular point displays, prefer <BorderPane> containing a <GridPane name=\"content\" columnCount=\"N\" columnAlign=\"center\" stretchColumn=\"2\"> with status-bubble <BoundLabel> cells (popupEnabled=\"false\" for read-only points, popups enabled for commandable/setpoint points).\n"
+    + "  f. Supported JSON Action Objects inside <station-actions>[ ... ]</station-actions>:\n"
+    + "     - {\"action\": \"createComponent\", \"type\": \"control:NumericWritable\", \"name\": \"ZoneTemp\", \"parent\": \"activeTarget\", \"x\": 4, \"y\": 4, \"value\": \"72.5\", \"facets\": \"units=u:fahrenheit;°F;(K)|precision=i:1\", \"flags\": \"summary\"}\n"
+    + "     - {\"action\": \"setSlotValue\", \"component\": \"ZoneTemp\", \"slot\": \"fallback\", \"value\": \"72.5\"} (supports deep dot-paths like \"proxyExt.pointId\" or \"alarmExt.offnormalAlgorithm.highLimit\")\n"
+    + "     - {\"action\": \"addDynamicSlot\", \"component\": \"activeTarget\", \"slot\": \"CustomNote\", \"type\": \"baja:String\", \"value\": \"Verified\", \"flags\": \"summary\"}\n"
+    + "     - {\"action\": \"addExtension\", \"component\": \"ZoneTemp\", \"type\": \"history:NumericIntervalHistoryExt\", \"name\": \"HistoryExt\", \"properties\": \"interval=00:15:00;enabled=true\"}\n"
     + "     - {\"action\": \"setFacets\", \"component\": \"ZoneTemp\", \"slot\": \"facets\", \"facets\": \"units=u:fahrenheit;°F;(K)|precision=i:1\"}\n"
+    + "     - {\"action\": \"setSlotFlags\", \"component\": \"ZoneTemp\", \"slot\": \"out\", \"flags\": \"+summary,-hidden\"}\n"
+    + "     - {\"action\": \"addTag\", \"component\": \"ZoneTemp\", \"tag\": \"n4:hs:zone\", \"value\": \"true\"} / {\"action\": \"removeTag\", \"component\": \"ZoneTemp\", \"tag\": \"n4:hs:zone\"}\n"
+    + "     - {\"action\": \"addRelation\", \"source\": \"ZoneTemp\", \"relation\": \"n4:hs:equipRef\", \"target\": \"VAV_101\"}\n"
     + "     - {\"action\": \"link\", \"source\": \"Input1\", \"sourceSlot\": \"out\", \"target\": \"AddBlock\", \"targetSlot\": \"inA\"}\n"
     + "     - {\"action\": \"unlink\", \"source\": \"Input1\", \"target\": \"AddBlock\", \"targetSlot\": \"inA\"}\n"
     + "     - {\"action\": \"renameComponent\", \"oldName\": \"Input1\", \"newName\": \"SupplyAirTemp\"}\n"
+    + "     - {\"action\": \"copyComponent\", \"component\": \"VAV_1\", \"newName\": \"VAV_2\", \"parent\": \"activeTarget\"}\n"
+    + "     - {\"action\": \"moveComponent\", \"component\": \"Point1\", \"targetParent\": \"SubFolder\"}\n"
     + "     - {\"action\": \"deleteComponent\", \"component\": \"OldBlock\"}\n"
-    + "     - {\"action\": \"invokeAction\", \"component\": \"PointName\", \"actionName\": \"auto\"}\n"
-    + "     - {\"action\": \"updateProgram\", \"component\": \"activeTarget\", \"source\": \"public void onExecute() throws Exception { ... }\"}\n"
-    + "     - {\"action\": \"updatePxFile\", \"xml\": \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><px version=\\\"1.0\\\" media=\\\"workbench:WbPxMedia\\\">...</px>\"}\n"
-    + "     - {\"action\": \"importBog\", \"bog\": \"<bajaObjectGraph version=\\\"4.0\\\">...</bajaObjectGraph>\"}\n"
+    + "     - {\"action\": \"invokeAction\", \"component\": \"ZoneTemp\", \"actionName\": \"override\", \"arg\": \"74.0\"}\n"
+    + "     - {\"action\": \"batchBql\", \"query\": \"station:|slot:/Drivers|bql:select * from control:NumericWritable\", \"subAction\": \"setFacets\", \"slot\": \"facets\", \"facets\": \"units=u:fahrenheit;°F;(K)|precision=i:1\"}\n"
+    + "     - {\"action\": \"updateProgram\", \"component\": \"activeTarget\", \"imports\": \"javax.baja.sys.*;\", \"source\": \"public void onExecute() throws Exception { ... }\"}\n"
+    + "     - {\"action\": \"updatePxFile\", \"file\": \"activeFile\", \"xml\": \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><px version=\\\"1.0\\\" media=\\\"workbench:WbPxMedia\\\">...</px>\"}\n"
+    + "     - {\"action\": \"patchFile\", \"file\": \"activeFile\", \"target\": \"<old snippet>\", \"replacement\": \"<new snippet>\"}\n"
+    + "     - {\"action\": \"writeFile\", \"file\": \"station:|file:^px/NewGraphic.px\", \"content\": \"...\"}\n"
+    + "     - {\"action\": \"copyFile\", \"source\": \"station:|file:^px/A.px\", \"target\": \"station:|file:^px/B.px\"} / {\"action\": \"renameFile\", ...} / {\"action\": \"deleteFile\", ...} / {\"action\": \"makeDir\", \"dir\": \"station:|file:^px/Sub\"}\n"
+    + "     - {\"action\": \"importBog\", \"parent\": \"activeTarget\", \"bog\": \"<bajaObjectGraph version=\\\"4.0\\\">...</bajaObjectGraph>\"}\n"
     + "     - {\"action\": \"arrangeWiresheet\", \"parent\": \"activeTarget\"}\n";
 
   private EddiesAiClient()
   {
+  }
+
+  public static boolean isPersonalGoogleSelection(String selectedUiModel, EddiesAiConfig cfg)
+  {
+    if (selectedUiModel != null)
+    {
+      if (selectedUiModel.contains("Google Ultra")
+        || selectedUiModel.contains("Google Personal")
+        || selectedUiModel.contains("Argon"))
+      {
+        return true;
+      }
+      if (selectedUiModel.contains("Company Farm"))
+      {
+        return false;
+      }
+    }
+    return cfg != null && cfg.isGooglePersonalReady();
+  }
+
+  private static int getThinkingBudgetForUiModel(String selectedUiModel)
+  {
+    if (selectedUiModel == null) return 0;
+    String m = selectedUiModel.toLowerCase();
+    if (m.contains("argon") && m.contains("high"))
+    {
+      return 24576; // High reasoning effort
+    }
+    if (m.contains("argon"))
+    {
+      return 8192; // Medium reasoning effort (Argon Medium default)
+    }
+    return 0;
+  }
+
+  private static String getDisplayLabelForGoogleModel(String selectedUiModel, String apiModel)
+  {
+    if (selectedUiModel != null && selectedUiModel.contains("Argon"))
+    {
+      if (selectedUiModel.contains("High"))
+      {
+        return "Gemini 4 Argon (High) (Google Ultra)";
+      }
+      return "Gemini 4 Argon (Medium) (Google Ultra)";
+    }
+    return apiModel + " (Google Personal)";
+  }
+
+  public static Thread testPersonalGoogleConnectionAsync(
+    final String candidateApiKey,
+    final AiResponseCallback callback)
+  {
+    Thread worker = new Thread(new Runnable()
+    {
+      @Override
+      public void run()
+      {
+        try
+        {
+          EddiesAiConfig cfg = EddiesAiConfig.get();
+          String keyToTest = EddiesAiConfig.sanitizeKey(candidateApiKey);
+          if (keyToTest.isEmpty())
+          {
+            keyToTest = cfg.getGeminiApiKey();
+          }
+          String oauthToken = "";
+          if (keyToTest.isEmpty() && cfg.isGoogleSignedIn())
+          {
+            oauthToken = EddiesAiAuthManager.getValidGoogleAccessToken();
+          }
+          if (keyToTest.isEmpty() && oauthToken.isEmpty())
+          {
+            callback.onError("Please paste your Google Gemini API Key (or sign in via Google OAuth) first.");
+            return;
+          }
+
+          String testModel = "gemini-2.5-flash";
+          String reply = callGoogleDirectGemini(
+            testModel,
+            keyToTest,
+            oauthToken,
+            cfg.getGoogleOAuthProjectId(),
+            "You are Eddie's Niagara Workbench AI Assistant.",
+            "Reply with one short sentence confirming that Eddie's personal Google Gemini connection is working.",
+            cfg);
+          callback.onSuccess(reply, testModel + " (Direct Google API)");
+        }
+        catch (Exception e)
+        {
+          callback.onError(safeMessage(e));
+        }
+      }
+    }, "EddiesWorkbenchAi-GoogleTest");
+    worker.setDaemon(true);
+    worker.start();
+    return worker;
   }
 
   public static Thread sendPromptAsync(
@@ -84,28 +200,8 @@ public final class EddiesAiClient
         try
         {
           EddiesAiConfig cfg = EddiesAiConfig.get();
-          String domain = cfg.getModelFarmDomain();
-          String apiKey = cfg.getModelFarmApiKey();
-          String subscriptionId = cfg.getModelFarmSubscriptionId();
 
-          // If no Model Farm Subscription Key is set yet, check if signed in with Microsoft 365 SSO token
-          if (apiKey.isEmpty() && cfg.isCopilotSignedIn())
-          {
-            apiKey = EddiesAiAuthManager.getValidCopilotAccessToken();
-          }
-
-          if (apiKey == null || apiKey.trim().isEmpty())
-          {
-            callback.onError(
-              "Company Copilot / Model Farm key is not configured yet.\n"
-              + "Click 'Account / Login' at the top of this sidebar to:\n"
-              + "  1. Enter your Company Subscription Key (for https://aoai-farm.bosch-temp.com), OR\n"
-              + "  2. Click 'Import from Active Station Program' if a StationBuilder Program block is on your WireSheet, OR\n"
-              + "  3. Sign in with your Microsoft 365 Work Account (SSO).");
-            return;
-          }
-
-          String fullUserContent = "";
+          String fullUserContent;
           if (stationContextBlock != null && !stationContextBlock.trim().isEmpty())
           {
             fullUserContent = stationContextBlock + "\n\nUSER PROMPT:\n" + userPrompt;
@@ -113,6 +209,114 @@ public final class EddiesAiClient
           else
           {
             fullUserContent = userPrompt;
+          }
+
+          boolean useGooglePersonal = isPersonalGoogleSelection(selectedUiModel, cfg);
+
+          // Route 1: Personal Google Account (Direct Gemini API)
+          if (useGooglePersonal)
+          {
+            String geminiKey = cfg.getGeminiApiKey();
+            String googleOAuthToken = "";
+            if (geminiKey.isEmpty() && cfg.isGoogleSignedIn())
+            {
+              googleOAuthToken = EddiesAiAuthManager.getValidGoogleAccessToken();
+            }
+
+            if (!geminiKey.isEmpty() || !googleOAuthToken.isEmpty())
+            {
+              String googleModel = mapUiModelToGoogleDirectModel(selectedUiModel, cfg);
+              int thinkingBudget = getThinkingBudgetForUiModel(selectedUiModel);
+              String displayLabel = getDisplayLabelForGoogleModel(selectedUiModel, googleModel);
+              try
+              {
+                String reply = callGoogleDirectGemini(
+                  googleModel,
+                  geminiKey,
+                  googleOAuthToken,
+                  cfg.getGoogleOAuthProjectId(),
+                  SYSTEM_INSTRUCTIONS,
+                  fullUserContent,
+                  thinkingBudget,
+                  cfg);
+                callback.onSuccess(reply, displayLabel);
+                return;
+              }
+              catch (Exception primaryGoogleErr)
+              {
+                String fallbackGoogleModel = "gemini-2.5-flash";
+                if (!fallbackGoogleModel.equalsIgnoreCase(googleModel)
+                  && primaryGoogleErr.getMessage() != null
+                  && (primaryGoogleErr.getMessage().contains("HTTP 404")
+                      || primaryGoogleErr.getMessage().contains("HTTP 429")
+                      || primaryGoogleErr.getMessage().contains("NOT_FOUND")))
+                {
+                  String reply = callGoogleDirectGemini(
+                    fallbackGoogleModel,
+                    geminiKey,
+                    googleOAuthToken,
+                    cfg.getGoogleOAuthProjectId(),
+                    SYSTEM_INSTRUCTIONS,
+                    fullUserContent,
+                    thinkingBudget,
+                    cfg);
+                  callback.onSuccess(reply, displayLabel + " [" + fallbackGoogleModel + "]");
+                  return;
+                }
+                throw primaryGoogleErr;
+              }
+            }
+
+            // If user selected a Google Personal model without configuring a Google key yet,
+            // only fall back to Company Model Farm if a Company Farm key is already configured.
+            if (cfg.getModelFarmApiKey().isEmpty() && !cfg.isCopilotSignedIn())
+            {
+              callback.onError(
+                "Personal Google Account is not configured yet.\n"
+                + "Click 'Account' at the top-right of this panel to:\n"
+                + "  1. Paste your personal Gemini API Key (from aistudio.google.com/app/apikey — stored encrypted on disk with AES-GCM-256), OR\n"
+                + "  2. Set the GEMINI_API_KEY environment variable in Windows, OR\n"
+                + "  3. Sign in with your Google Account in your browser (OAuth 2.0 — no password typed into Workbench).");
+              return;
+            }
+          }
+
+          // Route 2: Company AI Platform / Model Farm Gateway
+          String domain = cfg.getModelFarmDomain();
+          String apiKey = cfg.getModelFarmApiKey();
+          String subscriptionId = cfg.getModelFarmSubscriptionId();
+
+          if (apiKey.isEmpty() && cfg.isCopilotSignedIn())
+          {
+            apiKey = EddiesAiAuthManager.getValidCopilotAccessToken();
+          }
+
+          if (apiKey == null || apiKey.trim().isEmpty())
+          {
+            // Check if the user has a Personal Google Key configured even though a Company model was selected
+            if (cfg.isGooglePersonalReady())
+            {
+              String geminiKey = cfg.getGeminiApiKey();
+              String googleOAuthToken = geminiKey.isEmpty() ? EddiesAiAuthManager.getValidGoogleAccessToken() : "";
+              String googleModel = mapUiModelToGoogleDirectModel(selectedUiModel, cfg);
+              String reply = callGoogleDirectGemini(
+                googleModel,
+                geminiKey,
+                googleOAuthToken,
+                cfg.getGoogleOAuthProjectId(),
+                SYSTEM_INSTRUCTIONS,
+                fullUserContent,
+                cfg);
+              callback.onSuccess(reply, googleModel + " (Google Personal)");
+              return;
+            }
+
+            callback.onError(
+              "No AI account or API key is configured yet.\n"
+              + "Click 'Account' at the top of this sidebar to:\n"
+              + "  1. Enter your Personal Google Gemini API Key (encrypted with AES-GCM-256 on disk), OR\n"
+              + "  2. Enter your Company Model Farm Subscription Key (https://aoai-farm.bosch-temp.com).");
+            return;
           }
 
           String targetModel = mapUiModelToDeployment(selectedUiModel, cfg);
@@ -124,8 +328,6 @@ public final class EddiesAiClient
           }
           catch (Exception primaryErr)
           {
-            // If user selected Google Gemini 4 Argon or an Enterprise model not enabled on a Developer tier key,
-            // automatically try fallback to the verified working gpt-5-nano-2025-08-07 deployment!
             String fallbackModel = "gpt-5-nano-2025-08-07";
             if (!fallbackModel.equalsIgnoreCase(targetModel)
               && (primaryErr.getMessage() != null)
@@ -152,6 +354,41 @@ public final class EddiesAiClient
     worker.setDaemon(true);
     worker.start();
     return worker;
+  }
+
+  private static String mapUiModelToGoogleDirectModel(String uiModel, EddiesAiConfig cfg)
+  {
+    if (uiModel == null || uiModel.trim().isEmpty())
+    {
+      return "gemini-2.5-pro";
+    }
+    String m = uiModel.trim().toLowerCase();
+    if (m.contains("gemini-2.5-flash-lite"))
+    {
+      return "gemini-2.5-flash-lite";
+    }
+    if (m.contains("gemini-2.0-flash-lite"))
+    {
+      return "gemini-2.0-flash-lite";
+    }
+    if (m.contains("gemini-2.5-flash"))
+    {
+      return "gemini-2.5-flash";
+    }
+    if (m.contains("gemini-2.0-flash"))
+    {
+      return "gemini-2.0-flash";
+    }
+    if (m.contains("gemini-2.5-pro"))
+    {
+      return "gemini-2.5-pro";
+    }
+    if (m.contains("argon"))
+    {
+      String custom = cfg != null ? cfg.getGeminiArgonModelId() : "gemini-2.5-pro";
+      return (custom != null && !custom.trim().isEmpty()) ? custom.trim() : "gemini-2.5-pro";
+    }
+    return "gemini-2.5-pro";
   }
 
   private static String mapUiModelToDeployment(String uiModel, EddiesAiConfig cfg)
@@ -211,6 +448,132 @@ public final class EddiesAiClient
       return "claude-opus-4-8";
     }
     return m;
+  }
+
+  /**
+   * Calls Google's official Generative Language API directly:
+   * https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+   *
+   * Security note: The API key is passed exclusively via the x-goog-api-key HTTP header
+   * (never appended as ?key= in the URL), preventing any leakage in exception messages or logs.
+   */
+  private static String callGoogleDirectGemini(
+    String model,
+    String geminiApiKey,
+    String googleOAuthToken,
+    String googleProjectId,
+    String instructions,
+    String prompt,
+    EddiesAiConfig cfg) throws Exception
+  {
+    return callGoogleDirectGemini(model, geminiApiKey, googleOAuthToken, googleProjectId, instructions, prompt, 0, cfg);
+  }
+
+  private static String callGoogleDirectGemini(
+    String model,
+    String geminiApiKey,
+    String googleOAuthToken,
+    String googleProjectId,
+    String instructions,
+    String prompt,
+    int thinkingBudget,
+    EddiesAiConfig cfg) throws Exception
+  {
+    HttpURLConnection connection = null;
+    String cleanModel = (model != null && !model.trim().isEmpty()) ? model.trim() : "gemini-2.5-pro";
+    if (cleanModel.startsWith("models/"))
+    {
+      cleanModel = cleanModel.substring("models/".length());
+    }
+    String endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/"
+      + URLEncoder.encode(cleanModel, "UTF-8") + ":generateContent";
+
+    try
+    {
+      String thinkingCfg = (thinkingBudget > 0)
+        ? ",\"generationConfig\":{\"thinkingConfig\":{\"thinkingBudget\":" + thinkingBudget + "}}"
+        : "";
+      String requestBody = "{"
+        + "\"systemInstruction\":{\"parts\":[{\"text\":" + jsonString(instructions) + "}]},"
+        + "\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":" + jsonString(prompt) + "}]}]"
+        + thinkingCfg
+        + "}";
+      byte[] requestBytes = requestBody.getBytes(StandardCharsets.UTF_8);
+
+      URL url = new URL(endpointUrl);
+      if (cfg != null && cfg.isModelFarmUseProxy())
+      {
+        Proxy proxy = new Proxy(
+          Proxy.Type.HTTP,
+          new InetSocketAddress(cfg.getModelFarmProxyHost(), cfg.getModelFarmProxyPort()));
+        connection = (HttpURLConnection) url.openConnection(proxy);
+      }
+      else
+      {
+        connection = (HttpURLConnection) url.openConnection();
+      }
+
+      connection.setRequestMethod("POST");
+      connection.setDoOutput(true);
+      connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+      connection.setReadTimeout(READ_TIMEOUT_MS);
+
+      if (geminiApiKey != null && !geminiApiKey.trim().isEmpty())
+      {
+        connection.setRequestProperty("x-goog-api-key", geminiApiKey.trim());
+      }
+      else if (googleOAuthToken != null && !googleOAuthToken.trim().isEmpty())
+      {
+        connection.setRequestProperty("Authorization", "Bearer " + googleOAuthToken.trim());
+        if (googleProjectId != null && !googleProjectId.trim().isEmpty())
+        {
+          connection.setRequestProperty("x-goog-user-project", googleProjectId.trim());
+        }
+      }
+
+      connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+      connection.setRequestProperty("Accept", "application/json");
+      connection.setFixedLengthStreamingMode(requestBytes.length);
+
+      OutputStream out = connection.getOutputStream();
+      try
+      {
+        out.write(requestBytes);
+        out.flush();
+      }
+      finally
+      {
+        try { out.close(); } catch (Exception ignore) {}
+      }
+
+      int code = connection.getResponseCode();
+      String body = readFully(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
+
+      if (code >= 400)
+      {
+        if (code == 400 && thinkingBudget > 0)
+        {
+          return callGoogleDirectGemini(
+            model, geminiApiKey, googleOAuthToken, googleProjectId, instructions, prompt, 0, cfg);
+        }
+        String detail = extractErrorMessage(body);
+        throw new Exception("Google Gemini API HTTP " + code + " (" + cleanModel + "): " + detail);
+      }
+
+      String text = extractGeminiDirectContent(body);
+      if (text.isEmpty())
+      {
+        throw new Exception("No text returned by Google Gemini API (" + cleanModel + "). Response: " + trimToLength(body));
+      }
+      return text;
+    }
+    finally
+    {
+      if (connection != null)
+      {
+        connection.disconnect();
+      }
+    }
   }
 
   private static String callCompanyGateway(
@@ -381,6 +744,60 @@ public final class EddiesAiClient
     }
   }
 
+  /**
+   * Extracts the assistant response from Google's native generateContent JSON
+   * ("candidates":[{"content":{"parts":[{"text":"..."}]}}]).
+   * Handles multi-part responses (such as Gemini 2.5 thought parts followed by the response part).
+   */
+  private static String extractGeminiDirectContent(String json)
+  {
+    if (json == null || json.isEmpty()) return "";
+    StringBuilder nonThoughtText = new StringBuilder();
+    String lastTextPart = "";
+
+    int searchFrom = 0;
+    while (true)
+    {
+      int textKeyIdx = json.indexOf("\"text\"", searchFrom);
+      if (textKeyIdx < 0) break;
+
+      int colonIdx = json.indexOf(':', textKeyIdx + 6);
+      if (colonIdx < 0) break;
+
+      int quoteStart = json.indexOf('"', colonIdx + 1);
+      if (quoteStart < 0) break;
+
+      int quoteEnd = StationActionExecutor.findJsonStringEnd(json, quoteStart + 1);
+      if (quoteEnd <= quoteStart) break;
+
+      String extracted = StationActionExecutor.unescapeJson(json.substring(quoteStart + 1, quoteEnd));
+      lastTextPart = extracted;
+
+      // Check nearby in this part object if "thought": true is present
+      int partWindowStart = Math.max(0, textKeyIdx - 80);
+      int partWindowEnd = Math.min(json.length(), quoteEnd + 80);
+      String window = json.substring(partWindowStart, partWindowEnd);
+      boolean isThought = window.contains("\"thought\":true") || window.contains("\"thought\": true");
+
+      if (!isThought)
+      {
+        if (nonThoughtText.length() > 0)
+        {
+          nonThoughtText.append("\n");
+        }
+        nonThoughtText.append(extracted);
+      }
+
+      searchFrom = quoteEnd + 1;
+    }
+
+    if (nonThoughtText.length() > 0)
+    {
+      return nonThoughtText.toString();
+    }
+    return lastTextPart;
+  }
+
   private static String extractAssistantContent(String json)
   {
     if (json == null) return "";
@@ -404,22 +821,8 @@ public final class EddiesAiClient
       }
     }
 
-    // 2. Anthropic / Vertex format: "text":"..."
-    int textIndex = json.indexOf("\"text\":");
-    if (textIndex >= 0)
-    {
-      int quoteStart = json.indexOf('"', textIndex + 7);
-      if (quoteStart >= 0)
-      {
-        int quoteEnd = StationActionExecutor.findJsonStringEnd(json, quoteStart + 1);
-        if (quoteEnd > quoteStart)
-        {
-          return StationActionExecutor.unescapeJson(json.substring(quoteStart + 1, quoteEnd));
-        }
-      }
-    }
-
-    return "";
+    // 2. Anthropic / Vertex / Gemini format: "text":"..."
+    return extractGeminiDirectContent(json);
   }
 
   private static String extractErrorMessage(String json)

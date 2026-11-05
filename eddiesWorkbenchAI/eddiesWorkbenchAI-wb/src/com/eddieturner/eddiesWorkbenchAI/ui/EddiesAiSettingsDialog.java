@@ -21,15 +21,17 @@ import javax.baja.ui.enums.BHalign;
 import javax.baja.ui.pane.BBorderPane;
 import javax.baja.ui.pane.BEdgePane;
 import javax.baja.ui.pane.BGridPane;
+import javax.baja.ui.text.PasswordRenderer;
+import javax.baja.ui.text.TextRenderer;
 import javax.baja.workbench.BWbShell;
 
 /**
- * Modal Settings & Login dialog for Eddie's Company Copilot / AI Platform subscription.
+ * Modal Settings & Account dialog for Eddie's Workbench AI Assistant.
  * Supports:
- *  - Company AI Gateway (https://aoai-farm.bosch-temp.com) Subscription Key & Subscription ID
- *  - 1-click import from an active StationBuilder Program Object on the WireSheet
- *  - Microsoft 365 Work Account Browser SSO (login.microsoftonline.com + MFA)
- *  - Local corporate proxy (127.0.0.1:3128 Px) toggle
+ *  1. Personal Google Account (Direct Gemini API Key masked & AES-GCM-256 encrypted on disk,
+ *     GEMINI_API_KEY environment variable detection, and Google Browser OAuth 2.0 / CLI import)
+ *  2. Company AI Gateway (https://aoai-farm.bosch-temp.com) Subscription Key, Subscription ID,
+ *     1-click import from an active StationBuilder Program Object, and Microsoft 365 Work SSO.
  */
 public final class EddiesAiSettingsDialog
 {
@@ -48,21 +50,244 @@ public final class EddiesAiSettingsDialog
     BFont labelFont = BFont.make("Tahoma", 11.0);
     BFont smallFont = BFont.make("Tahoma", 10.0);
 
-    // ---- Section 1: Company AI Platform / Model Farm Subscription ----
-    BLabel sec1Title = new BLabel("1. Company AI Platform Subscription (Model Farm Gateway)", headerFont);
+    final BLabel statusBanner = new BLabel("Ready. All saved API keys are encrypted on disk with AES-GCM-256.", smallFont);
+    statusBanner.setForeground(BBrush.makeSolid(BColor.make(30, 95, 65)));
+
+    // ============================================================================
+    // Section 1: Personal Google Account (Direct Gemini API + Secure Storage)
+    // ============================================================================
+    BLabel secGoogleTitle = new BLabel("1. Personal Google Gemini Ultra Account (Default: Gemini 4 Argon Medium ⭐)", headerFont);
+    secGoogleTitle.setForeground(BBrush.makeSolid(BColor.make(20, 95, 55)));
+
+    BLabel googleSecurityNote = new BLabel(
+      "Note: Google blocks username/password login in desktop apps. Use a personal Google AI Studio API Key (masked below & encrypted on disk with AES-GCM-256) or Browser OAuth.",
+      smallFont);
+    googleSecurityNote.setForeground(BBrush.makeSolid(BColor.make(85, 95, 110)));
+
+    final BTextField geminiKeyField = new BTextField(cfg.getStoredGeminiApiKeyOnly(), 38, true);
+    applySecretMask(geminiKeyField, true);
+
+    String initialGoogleState;
+    if (!cfg.getStoredGeminiApiKeyOnly().isEmpty())
+    {
+      initialGoogleState = "Encrypted Key Stored: " + EddiesAiConfig.maskSecretPreview(cfg.getStoredGeminiApiKeyOnly());
+    }
+    else if (cfg.isGeminiApiKeyFromEnv())
+    {
+      initialGoogleState = "Active from Windows Env Var (GEMINI_API_KEY / GOOGLE_API_KEY): "
+        + EddiesAiConfig.maskSecretPreview(cfg.getGeminiApiKey());
+    }
+    else if (cfg.isGoogleSignedIn())
+    {
+      initialGoogleState = "Signed in via Google OAuth: " + cfg.getGoogleUserEmail();
+    }
+    else
+    {
+      initialGoogleState = "Not configured yet — Paste a Gemini API Key below or set GEMINI_API_KEY env var.";
+    }
+    final BLabel googleStatusLabel = new BLabel(initialGoogleState, smallFont);
+    googleStatusLabel.setForeground(BBrush.makeSolid(BColor.make(25, 80, 140)));
+
+    BGridPane googleGrid = new BGridPane(2);
+    googleGrid.setRowGap(6.0);
+    googleGrid.setColumnGap(8.0);
+    googleGrid.setStretchColumn(1);
+    googleGrid.setColumnAlign(BHalign.left);
+    googleGrid.add("gl1", new BLabel("Gemini API Key (Masked):", labelFont));
+    googleGrid.add("gf1", geminiKeyField);
+    googleGrid.add("gl2", new BLabel("Current Google Status:", smallFont));
+    googleGrid.add("gf2", googleStatusLabel);
+
+    Command openAiStudioCmd = new Command(owner, "Get Key (Google AI Studio)")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        try
+        {
+          EddiesAiAuthManager.openBrowserUrl("https://aistudio.google.com/app/apikey");
+          statusBanner.setText("Opened https://aistudio.google.com/app/apikey in your browser.");
+        }
+        catch (Exception e)
+        {
+          statusBanner.setText("Open https://aistudio.google.com/app/apikey in your browser.");
+        }
+        statusBanner.relayout();
+        statusBanner.repaint();
+        return null;
+      }
+    };
+    BButton openAiStudioBtn = new BButton(openAiStudioCmd, true, false);
+
+    Command testGoogleCmd = new Command(owner, "Test Google Key")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        statusBanner.setText("Testing Personal Google Gemini API connection...");
+        statusBanner.relayout();
+        statusBanner.repaint();
+        EddiesAiClient.testPersonalGoogleConnectionAsync(
+          geminiKeyField.getText(),
+          new EddiesAiClient.AiResponseCallback()
+          {
+            @Override
+            public void onSuccess(final String responseText, final String usedModel)
+            {
+              SwingUtilities.invokeLater(new Runnable()
+              {
+                @Override
+                public void run()
+                {
+                  String preview = responseText != null ? responseText.replace('\n', ' ').trim() : "OK";
+                  if (preview.length() > 95) preview = preview.substring(0, 95) + "...";
+                  statusBanner.setText("Verified [" + usedModel + "]: " + preview);
+                  statusBanner.relayout();
+                  statusBanner.repaint();
+                }
+              });
+            }
+
+            @Override
+            public void onError(final String errorMessage)
+            {
+              SwingUtilities.invokeLater(new Runnable()
+              {
+                @Override
+                public void run()
+                {
+                  statusBanner.setText("Google Test Failed: " + errorMessage);
+                  statusBanner.relayout();
+                  statusBanner.repaint();
+                }
+              });
+            }
+          });
+        return null;
+      }
+    };
+    BButton testGoogleBtn = new BButton(testGoogleCmd, true, false);
+
+    final EddiesAiAuthManager.AuthCallback googleOAuthCb = new EddiesAiAuthManager.AuthCallback()
+    {
+      @Override
+      public void onStatus(final String statusMessage)
+      {
+        SwingUtilities.invokeLater(new Runnable()
+        {
+          @Override
+          public void run()
+          {
+            statusBanner.setText(statusMessage);
+            statusBanner.relayout();
+            statusBanner.repaint();
+          }
+        });
+      }
+
+      @Override
+      public void onSuccess(final String summaryMessage)
+      {
+        SwingUtilities.invokeLater(new Runnable()
+        {
+          @Override
+          public void run()
+          {
+            googleStatusLabel.setText(summaryMessage);
+            statusBanner.setText(summaryMessage);
+            googleStatusLabel.relayout();
+            googleStatusLabel.repaint();
+            statusBanner.relayout();
+            statusBanner.repaint();
+            if (onSettingsSaved != null) onSettingsSaved.run();
+          }
+        });
+      }
+
+      @Override
+      public void onError(final String errorMessage)
+      {
+        SwingUtilities.invokeLater(new Runnable()
+        {
+          @Override
+          public void run()
+          {
+            statusBanner.setText(errorMessage);
+            statusBanner.relayout();
+            statusBanner.repaint();
+          }
+        });
+      }
+    };
+
+    Command googleOAuthCmd = new Command(owner, "Browser OAuth / Import CLI")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        EddiesAiAuthManager.signInWithGoogleAsync(googleOAuthCb);
+        return null;
+      }
+    };
+    BButton googleOAuthBtn = new BButton(googleOAuthCmd, true, false);
+
+    Command clearGoogleCmd = new Command(owner, "Clear Google Key")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        geminiKeyField.setText("");
+        cfg.setGeminiApiKey("");
+        cfg.clearGoogleAuth();
+        googleStatusLabel.setText(cfg.isGeminiApiKeyFromEnv()
+          ? "Using GEMINI_API_KEY from Windows Environment Variable."
+          : "Cleared stored Google API Key & OAuth session.");
+        statusBanner.setText("Cleared stored Personal Google credentials from disk.");
+        googleStatusLabel.relayout();
+        googleStatusLabel.repaint();
+        statusBanner.relayout();
+        statusBanner.repaint();
+        if (onSettingsSaved != null) onSettingsSaved.run();
+        return null;
+      }
+    };
+    BButton clearGoogleBtn = new BButton(clearGoogleCmd, true, false);
+
+    BGridPane googleBtns = new BGridPane(4);
+    googleBtns.setColumnGap(6.0);
+    googleBtns.add("gb1", openAiStudioBtn);
+    googleBtns.add("gb2", testGoogleBtn);
+    googleBtns.add("gb3", googleOAuthBtn);
+    googleBtns.add("gb4", clearGoogleBtn);
+
+    BGridPane secGoogleStack = new BGridPane(1);
+    secGoogleStack.setRowGap(6.0);
+    secGoogleStack.setStretchColumn(0);
+    secGoogleStack.setColumnAlign(BHalign.left);
+    secGoogleStack.add("gt", secGoogleTitle);
+    secGoogleStack.add("gn", googleSecurityNote);
+    secGoogleStack.add("gg", googleGrid);
+    secGoogleStack.add("gb", googleBtns);
+
+    BBorderPane secGoogleBox = new BBorderPane(secGoogleStack, BInsets.make(8.0, 10.0, 8.0, 10.0));
+    secGoogleBox.setFill(BBrush.makeSolid(BColor.make(243, 250, 246)));
+    secGoogleBox.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(180, 215, 195))));
+
+    // ============================================================================
+    // Section 2: Company AI Platform / Model Farm Subscription & M365 SSO
+    // ============================================================================
+    BLabel sec1Title = new BLabel("2. Company AI Platform Subscription (Model Farm Gateway & M365 SSO)", headerFont);
     sec1Title.setForeground(BBrush.makeSolid(BColor.make(25, 65, 130)));
 
     final BTextField domainField = new BTextField(cfg.getModelFarmDomain(), 38, true);
-    final BTextField apiKeyField = new BTextField(cfg.getModelFarmApiKey(), 38, true);
+    final BTextField apiKeyField = new BTextField(cfg.getStoredModelFarmApiKeyOnly(), 38, true);
+    applySecretMask(apiKeyField, true);
     final BTextField subIdField = new BTextField(cfg.getModelFarmSubscriptionId(), 38, true);
     final BCheckBox useProxyCheck = new BCheckBox(
       "Use Corporate Laptop Local Proxy (Px 127.0.0.1:3128)",
       cfg.isModelFarmUseProxy());
     final BTextField proxyHostField = new BTextField(cfg.getModelFarmProxyHost(), 16, true);
     final BTextField proxyPortField = new BTextField(Integer.toString(cfg.getModelFarmProxyPort()), 8, true);
-
-    final BLabel statusBanner = new BLabel("Ready.", smallFont);
-    statusBanner.setForeground(BBrush.makeSolid(BColor.make(45, 95, 155)));
 
     Command importFromStationCmd = new Command(owner, "Import Key from Active Station Program")
     {
@@ -72,9 +297,9 @@ public final class EddiesAiSettingsDialog
         if (StationContextExtractor.tryImportCredentialsFromShell(shell))
         {
           domainField.setText(cfg.getModelFarmDomain());
-          apiKeyField.setText(cfg.getModelFarmApiKey());
+          apiKeyField.setText(cfg.getStoredModelFarmApiKeyOnly());
           subIdField.setText(cfg.getModelFarmSubscriptionId());
-          statusBanner.setText("Imported ApiKey / Domain / SubscriptionId from active station Program!");
+          statusBanner.setText("Imported & encrypted ApiKey / Domain / SubscriptionId from active station Program!");
         }
         else
         {
@@ -93,7 +318,7 @@ public final class EddiesAiSettingsDialog
 
     formGrid.add("l1", new BLabel("Gateway Domain:", labelFont));
     formGrid.add("f1", domainField);
-    formGrid.add("l2", new BLabel("Subscription API Key:", labelFont));
+    formGrid.add("l2", new BLabel("Subscription Key (Masked):", labelFont));
     formGrid.add("f2", apiKeyField);
     formGrid.add("l3", new BLabel("Subscription ID:", labelFont));
     formGrid.add("f3", subIdField);
@@ -105,28 +330,10 @@ public final class EddiesAiSettingsDialog
     proxyRow.add("ppL", new BLabel("Port:", smallFont));
     proxyRow.add("ppF", proxyPortField);
 
-    BGridPane sec1Stack = new BGridPane(1);
-    sec1Stack.setRowGap(6.0);
-    sec1Stack.setStretchColumn(0);
-    sec1Stack.setColumnAlign(BHalign.left);
-    sec1Stack.add("s1t", sec1Title);
-    sec1Stack.add("fg", formGrid);
-    sec1Stack.add("pxChk", useProxyCheck);
-    sec1Stack.add("pxRow", proxyRow);
-    sec1Stack.add("impBtn", importStationBtn);
-
-    BBorderPane sec1Box = new BBorderPane(sec1Stack, BInsets.make(8.0, 10.0, 8.0, 10.0));
-    sec1Box.setFill(BBrush.makeSolid(BColor.make(246, 248, 252)));
-    sec1Box.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(205, 214, 228))));
-
-    // ---- Section 2: Microsoft 365 Work Account SSO (Company Copilot) ----
-    BLabel sec2Title = new BLabel("2. Company Microsoft 365 Work Account (Browser SSO + MFA)", headerFont);
-    sec2Title.setForeground(BBrush.makeSolid(BColor.make(25, 65, 130)));
-
     String initialSsoText = cfg.isCopilotSignedIn()
-      ? "Signed in: " + cfg.getCopilotUserDisplay()
-      : "Not signed in via Microsoft 365 SSO (using Subscription API Key above)";
-    final BLabel ssoStatusLabel = new BLabel(initialSsoText, labelFont);
+      ? "M365 SSO Signed in: " + cfg.getCopilotUserDisplay()
+      : "M365 Work SSO: Not signed in";
+    final BLabel ssoStatusLabel = new BLabel(initialSsoText, smallFont);
 
     final EddiesAiAuthManager.AuthCallback authCb = new EddiesAiAuthManager.AuthCallback()
     {
@@ -191,18 +398,7 @@ public final class EddiesAiSettingsDialog
     };
     BButton m365SsoBtn = new BButton(m365SsoCmd, true, false);
 
-    Command importLocalCopilotCmd = new Command(owner, "Import Local Copilot Login")
-    {
-      @Override
-      public CommandArtifact doInvoke()
-      {
-        EddiesAiAuthManager.importLocalCopilotToken(authCb);
-        return null;
-      }
-    };
-    BButton importLocalBtn = new BButton(importLocalCopilotCmd, true, false);
-
-    Command signOutCmd = new Command(owner, "Sign Out SSO")
+    Command signOutCmd = new Command(owner, "Sign Out M365 SSO")
     {
       @Override
       public CommandArtifact doInvoke()
@@ -216,46 +412,65 @@ public final class EddiesAiSettingsDialog
     };
     BButton signOutBtn = new BButton(signOutCmd, true, false);
 
-    BGridPane ssoBtns = new BGridPane(3);
-    ssoBtns.setColumnGap(6.0);
-    ssoBtns.add("b1", m365SsoBtn);
-    ssoBtns.add("b2", importLocalBtn);
-    ssoBtns.add("b3", signOutBtn);
+    BGridPane companyBtns = new BGridPane(3);
+    companyBtns.setColumnGap(6.0);
+    companyBtns.add("cb1", importStationBtn);
+    companyBtns.add("cb2", m365SsoBtn);
+    companyBtns.add("cb3", signOutBtn);
 
-    BLabel ssoHint = new BLabel(
-      "Opens your default browser (Edge/Chrome) so corporate SSO, Windows login, and MFA authenticate without typing your password here.",
-      smallFont);
-    ssoHint.setForeground(BBrush.makeSolid(BColor.make(100, 110, 125)));
+    BGridPane sec1Stack = new BGridPane(1);
+    sec1Stack.setRowGap(6.0);
+    sec1Stack.setStretchColumn(0);
+    sec1Stack.setColumnAlign(BHalign.left);
+    sec1Stack.add("s1t", sec1Title);
+    sec1Stack.add("fg", formGrid);
+    sec1Stack.add("pxChk", useProxyCheck);
+    sec1Stack.add("pxRow", proxyRow);
+    sec1Stack.add("ssoSt", ssoStatusLabel);
+    sec1Stack.add("cBtns", companyBtns);
 
-    BGridPane sec2Stack = new BGridPane(1);
-    sec2Stack.setRowGap(6.0);
-    sec2Stack.setStretchColumn(0);
-    sec2Stack.setColumnAlign(BHalign.left);
-    sec2Stack.add("s2t", sec2Title);
-    sec2Stack.add("ssoSt", ssoStatusLabel);
-    sec2Stack.add("ssoBtns", ssoBtns);
-    sec2Stack.add("ssoHint", ssoHint);
-
-    BBorderPane sec2Box = new BBorderPane(sec2Stack, BInsets.make(8.0, 10.0, 8.0, 10.0));
-    sec2Box.setFill(BBrush.makeSolid(BColor.make(246, 248, 252)));
-    sec2Box.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(205, 214, 228))));
+    BBorderPane sec1Box = new BBorderPane(sec1Stack, BInsets.make(8.0, 10.0, 8.0, 10.0));
+    sec1Box.setFill(BBrush.makeSolid(BColor.make(246, 248, 252)));
+    sec1Box.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(205, 214, 228))));
 
     // ---- Main Dialog Layout ----
     BGridPane mainStack = new BGridPane(1);
     mainStack.setRowGap(10.0);
     mainStack.setStretchColumn(0);
     mainStack.setColumnAlign(BHalign.left);
+    mainStack.add("secGoogle", secGoogleBox);
     mainStack.add("sec1", sec1Box);
-    mainStack.add("sec2", sec2Box);
     mainStack.add("status", new BBorderPane(statusBanner, BInsets.make(2.0, 4.0, 2.0, 4.0)));
 
     final BDialog[] dialogRef = new BDialog[1];
+    final boolean[] keysMasked = new boolean[] { true };
 
-    Command saveCmd = new Command(owner, "Save & Close")
+    Command toggleMaskCmd = new Command(owner, "Show / Unmask Keys")
     {
       @Override
       public CommandArtifact doInvoke()
       {
+        keysMasked[0] = !keysMasked[0];
+        applySecretMask(geminiKeyField, keysMasked[0]);
+        applySecretMask(apiKeyField, keysMasked[0]);
+        statusBanner.setText(keysMasked[0]
+          ? "API keys masked (hidden & copy disabled)."
+          : "API keys visible (will be encrypted with AES-GCM-256 on Save).");
+        statusBanner.relayout();
+        statusBanner.repaint();
+        return null;
+      }
+    };
+    BButton toggleMaskBtn = new BButton(toggleMaskCmd, true, false);
+
+    Command saveCmd = new Command(owner, "Save & Encrypt")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        String enteredGeminiKey = geminiKeyField.getText();
+        cfg.setGeminiApiKey(enteredGeminiKey);
+
         cfg.setModelFarmDomain(domainField.getText());
         cfg.setModelFarmApiKey(apiKeyField.getText());
         cfg.setModelFarmSubscriptionId(subIdField.getText());
@@ -266,6 +481,15 @@ public final class EddiesAiSettingsDialog
           cfg.setModelFarmProxyPort(Integer.parseInt(proxyPortField.getText().trim()));
         }
         catch (NumberFormatException ignore) {}
+
+        // If user entered a personal Google key and was previously on a Company Farm model,
+        // automatically switch the active model to Gemini 4 Argon (Medium) (Google Ultra ⭐)!
+        if (enteredGeminiKey != null && !enteredGeminiKey.trim().isEmpty()
+          && cfg.getSelectedModel().contains("Company Farm"))
+        {
+          cfg.setSelectedModel(EddiesAiConfig.DEFAULT_MODEL);
+        }
+
         cfg.save();
 
         if (onSettingsSaved != null)
@@ -301,6 +525,7 @@ public final class EddiesAiSettingsDialog
     footerBtns.add("cancel", cancelBtn);
 
     BEdgePane footerBar = new BEdgePane();
+    footerBar.setLeft(toggleMaskBtn);
     footerBar.setRight(footerBtns);
 
     BEdgePane contentPane = new BEdgePane();
@@ -311,7 +536,7 @@ public final class EddiesAiSettingsDialog
 
     BDialog dlg = new BDialog(
       owner,
-      "Eddie's AI Assistant — Company Copilot / Model Farm Login",
+      "Eddie's AI Assistant — Personal Google Account & AI Settings",
       true,
       paddedContent);
     dialogRef[0] = dlg;
@@ -319,5 +544,28 @@ public final class EddiesAiSettingsDialog
     dlg.computePreferredSize();
     dlg.setBoundsCenteredOnOwner();
     dlg.open();
+  }
+
+  private static void applySecretMask(BTextField field, boolean masked)
+  {
+    if (field == null) return;
+    try
+    {
+      if (masked)
+      {
+        field.setRenderer(new PasswordRenderer());
+        field.setAllowCopying(false);
+      }
+      else
+      {
+        field.setRenderer(new TextRenderer());
+        field.setAllowCopying(true);
+      }
+      field.relayout();
+      field.repaint();
+    }
+    catch (Throwable ignore)
+    {
+    }
   }
 }

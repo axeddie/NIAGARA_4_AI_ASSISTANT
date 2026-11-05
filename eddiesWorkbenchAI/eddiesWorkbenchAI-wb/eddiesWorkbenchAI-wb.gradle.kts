@@ -52,6 +52,10 @@ dependencies {
   api(":bajaui-wb")
   api(":workbench-wb")
 
+  // JavaFX runtime (WebView / JFXPanel) from Niagara's bundled JRE
+  val niagaraHome = project.findProperty("niagara_home")?.toString() ?: "C:/Niagara/EC-Net Facilities-4.15.4.24"
+  compileOnly(files("$niagaraHome/jre/lib/ext/jfxrt.jar"))
+
   // Test Niagara module dependencies
   moduleTestImplementation(":test-wb")
 }

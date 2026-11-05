@@ -39,6 +39,14 @@
       </parameters>
     </req-permission>
     <req-permission>
+      <name>SYSTEM_PROPERTIES</name>
+      <purposeKey>Read user and Niagara home system properties in Workbench</purposeKey>
+      <parameters>
+        <parameter name="properties" value="*"/>
+        <parameter name="actions" value="read"/>
+      </parameters>
+    </req-permission>
+    <req-permission>
       <name>UI</name>
       <purposeKey>Workbench AI UI and Browser OAuth</purposeKey>
     </req-permission>

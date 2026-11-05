@@ -6,20 +6,42 @@ package com.eddieturner.eddiesWorkbenchAI.ui;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.security.spec.KeySpec;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import javax.baja.sys.Sys;
+import javax.crypto.Cipher;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Persistent configuration and credential store for Eddie's Workbench AI Assistant.
- * Saves user preferences, Company Model Farm keys/settings, OAuth tokens
- * (Google & Microsoft 365 Copilot SSO), and API keys inside the Niagara user home directory.
+ * Saves user preferences, Personal Google Account (Gemini API Key / Google OAuth),
+ * and Company Model Farm settings inside the Niagara user home directory.
+ *
+ * All sensitive keys and OAuth tokens stored on disk are encrypted using AES-GCM-256
+ * with a Windows user/machine-bound PBKDF2 key and per-user random salt so that plain-text
+ * API keys are never written to eddiesWorkbenchAI.properties.
  */
 public final class EddiesAiConfig
 {
   private static final EddiesAiConfig INSTANCE = new EddiesAiConfig();
+  private static final String ENC_PREFIX = "ENC:v1:";
+  private static final int GCM_IV_LENGTH = 12;
+  private static final int GCM_TAG_BITS = 128;
 
   private final Properties props = new Properties();
+  private final Map<String, String> decryptedCache = new HashMap<String, String>();
   private final File configFile;
+  private final File saltFile;
+  private SecretKeySpec cachedKeySpec;
+  private long lastLoadedModifiedMs = -1L;
 
   public static EddiesAiConfig get()
   {
@@ -53,6 +75,9 @@ public final class EddiesAiConfig
     this.configFile = (baseDir != null)
       ? new File(baseDir, "eddiesWorkbenchAI.properties")
       : new File("eddiesWorkbenchAI.properties");
+    this.saltFile = (baseDir != null)
+      ? new File(baseDir, ".eddiesAiKeySalt")
+      : new File(".eddiesAiKeySalt");
     load();
   }
 
@@ -88,8 +113,15 @@ public final class EddiesAiConfig
     try
     {
       if (configFile == null || !configFile.exists()) return;
+      long mod = configFile.lastModified();
+      if (mod > 0L && mod == lastLoadedModifiedMs && !props.isEmpty())
+      {
+        return;
+      }
       in = new FileInputStream(configFile);
       props.load(in);
+      decryptedCache.clear();
+      lastLoadedModifiedMs = mod;
     }
     catch (Throwable ignore)
     {
@@ -114,8 +146,20 @@ public final class EddiesAiConfig
       {
         parent.mkdirs();
       }
+      // Ensure any legacy plaintext secrets in props are upgraded to ENC:v1: before writing
+      upgradePlaintextSecretIfNeeded("geminiApiKey");
+      upgradePlaintextSecretIfNeeded("googleAccessToken");
+      upgradePlaintextSecretIfNeeded("googleRefreshToken");
+      upgradePlaintextSecretIfNeeded("googleOAuthClientSecret");
+      upgradePlaintextSecretIfNeeded("modelFarmApiKey");
+      upgradePlaintextSecretIfNeeded("copilotAccessToken");
+      upgradePlaintextSecretIfNeeded("copilotRefreshToken");
+      upgradePlaintextSecretIfNeeded("openAiApiKey");
+      upgradePlaintextSecretIfNeeded("anthropicApiKey");
+
       out = new FileOutputStream(configFile);
-      props.store(out, "Eddie's Workbench AI Assistant Configuration");
+      props.store(out, "Eddie's Workbench AI Assistant Configuration (Secrets AES-GCM Encrypted)");
+      lastLoadedModifiedMs = configFile.lastModified();
     }
     catch (Throwable ignore)
     {
@@ -152,11 +196,193 @@ public final class EddiesAiConfig
     }
   }
 
+  private synchronized String getSecret(String key, String def)
+  {
+    String raw = props.getProperty(key);
+    if (raw == null || raw.trim().isEmpty())
+    {
+      return def;
+    }
+    String trimmed = raw.trim();
+    if (trimmed.startsWith(ENC_PREFIX))
+    {
+      String cached = decryptedCache.get(trimmed);
+      if (cached != null)
+      {
+        return cached;
+      }
+      String decrypted = decryptSecret(trimmed);
+      if (decrypted != null)
+      {
+        decryptedCache.put(trimmed, decrypted);
+        return decrypted;
+      }
+      return def;
+    }
+    return trimmed;
+  }
+
+  private synchronized void setSecret(String key, String plainVal)
+  {
+    if (plainVal == null || plainVal.trim().isEmpty())
+    {
+      props.remove(key);
+      return;
+    }
+    String clean = plainVal.trim();
+    if (clean.startsWith(ENC_PREFIX))
+    {
+      props.setProperty(key, clean);
+    }
+    else
+    {
+      String enc = encryptSecret(clean);
+      props.setProperty(key, enc);
+      decryptedCache.put(enc, clean);
+    }
+  }
+
+  private synchronized void upgradePlaintextSecretIfNeeded(String key)
+  {
+    String raw = props.getProperty(key);
+    if (raw != null && !raw.trim().isEmpty() && !raw.trim().startsWith(ENC_PREFIX))
+    {
+      props.setProperty(key, encryptSecret(raw.trim()));
+    }
+  }
+
+  private String encryptSecret(String plainText)
+  {
+    if (plainText == null || plainText.isEmpty()) return "";
+    try
+    {
+      SecretKeySpec keySpec = deriveMachineUserKey();
+      byte[] iv = new byte[GCM_IV_LENGTH];
+      new SecureRandom().nextBytes(iv);
+
+      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+      GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_BITS, iv);
+      cipher.init(Cipher.ENCRYPT_MODE, keySpec, spec);
+      byte[] cipherText = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+
+      byte[] combined = new byte[iv.length + cipherText.length];
+      System.arraycopy(iv, 0, combined, 0, iv.length);
+      System.arraycopy(cipherText, 0, combined, iv.length, cipherText.length);
+
+      return ENC_PREFIX + Base64.getEncoder().encodeToString(combined);
+    }
+    catch (Throwable t)
+    {
+      return plainText;
+    }
+  }
+
+  private String decryptSecret(String encryptedValue)
+  {
+    if (encryptedValue == null || !encryptedValue.startsWith(ENC_PREFIX))
+    {
+      return encryptedValue;
+    }
+    try
+    {
+      String b64 = encryptedValue.substring(ENC_PREFIX.length()).trim();
+      byte[] combined = Base64.getDecoder().decode(b64);
+      if (combined.length <= GCM_IV_LENGTH) return "";
+
+      byte[] iv = new byte[GCM_IV_LENGTH];
+      byte[] cipherText = new byte[combined.length - GCM_IV_LENGTH];
+      System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH);
+      System.arraycopy(combined, GCM_IV_LENGTH, cipherText, 0, cipherText.length);
+
+      SecretKeySpec keySpec = deriveMachineUserKey();
+      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+      GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_BITS, iv);
+      cipher.init(Cipher.DECRYPT_MODE, keySpec, spec);
+      byte[] plainBytes = cipher.doFinal(cipherText);
+      return new String(plainBytes, StandardCharsets.UTF_8);
+    }
+    catch (Throwable t)
+    {
+      return "";
+    }
+  }
+
+  private synchronized SecretKeySpec deriveMachineUserKey() throws Exception
+  {
+    if (cachedKeySpec != null)
+    {
+      return cachedKeySpec;
+    }
+    String user = safeGetProperty("user.name", "");
+    if (user.isEmpty()) user = safeGetenv("USERNAME");
+    String domain = safeGetenv("USERDOMAIN");
+    String computer = safeGetenv("COMPUTERNAME");
+    String home = safeGetProperty("user.home", "");
+
+    String passphrase = "EddiesWorkbenchAI-v1|"
+      + (user != null ? user : "user") + "|"
+      + (domain != null ? domain : "local") + "|"
+      + (computer != null ? computer : "pc") + "|"
+      + (home != null ? home : "home");
+
+    byte[] salt = loadOrCreateSalt();
+    SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+    KeySpec spec = new PBEKeySpec(passphrase.toCharArray(), salt, 65536, 256);
+    byte[] keyBytes = factory.generateSecret(spec).getEncoded();
+    cachedKeySpec = new SecretKeySpec(keyBytes, "AES");
+    return cachedKeySpec;
+  }
+
+  private byte[] loadOrCreateSalt()
+  {
+    try
+    {
+      if (saltFile != null && saltFile.exists() && saltFile.length() >= 16)
+      {
+        FileInputStream in = new FileInputStream(saltFile);
+        try
+        {
+          byte[] buf = new byte[16];
+          int read = in.read(buf);
+          if (read == 16) return buf;
+        }
+        finally
+        {
+          try { in.close(); } catch (Throwable ignore) {}
+        }
+      }
+      byte[] newSalt = new byte[16];
+      new SecureRandom().nextBytes(newSalt);
+      if (saltFile != null)
+      {
+        File parent = saltFile.getParentFile();
+        if (parent != null && !parent.exists()) parent.mkdirs();
+        FileOutputStream out = new FileOutputStream(saltFile);
+        try
+        {
+          out.write(newSalt);
+          out.flush();
+        }
+        finally
+        {
+          try { out.close(); } catch (Throwable ignore) {}
+        }
+      }
+      return newSalt;
+    }
+    catch (Throwable ignore)
+    {
+      return "EddiesAiStaticS!".getBytes(StandardCharsets.UTF_8);
+    }
+  }
+
   // ---- General UI & Execution Preferences ----
+
+  public static final String DEFAULT_MODEL = "Gemini 4 Argon (Medium) (Google Ultra ⭐)";
 
   public String getSelectedModel()
   {
-    return getStr("selectedModel", "gpt-5-nano-2025-08-07 (Company Farm ⭐)");
+    return getStr("selectedModel", DEFAULT_MODEL);
   }
 
   public void setSelectedModel(String model)
@@ -174,6 +400,157 @@ public final class EddiesAiConfig
     setStr("autoApplyChanges", Boolean.toString(autoApply));
   }
 
+  // ---- Personal Google Account (Direct Gemini API & Google OAuth 2.0) ----
+
+  public String getStoredGeminiApiKeyOnly()
+  {
+    return sanitizeKey(getSecret("geminiApiKey", ""));
+  }
+
+  public boolean isGeminiApiKeyFromEnv()
+  {
+    if (!getStoredGeminiApiKeyOnly().isEmpty())
+    {
+      return false;
+    }
+    String env = safeGetenv("GEMINI_API_KEY");
+    if (env != null && !env.trim().isEmpty()) return true;
+    env = safeGetenv("GOOGLE_API_KEY");
+    return (env != null && !env.trim().isEmpty());
+  }
+
+  public String getGeminiApiKey()
+  {
+    String key = getStoredGeminiApiKeyOnly();
+    if (key.isEmpty())
+    {
+      String env = safeGetenv("GEMINI_API_KEY");
+      if (env != null && !env.trim().isEmpty()) return sanitizeKey(env);
+      env = safeGetenv("GOOGLE_API_KEY");
+      if (env != null && !env.trim().isEmpty()) return sanitizeKey(env);
+    }
+    return sanitizeKey(key);
+  }
+
+  public void setGeminiApiKey(String key)
+  {
+    setSecret("geminiApiKey", sanitizeKey(key));
+  }
+
+  public static String maskSecretPreview(String secret)
+  {
+    if (secret == null || secret.trim().isEmpty()) return "(not set)";
+    String s = secret.trim();
+    if (s.length() <= 8) return "••••••••";
+    return s.substring(0, 4) + "••••••••" + s.substring(s.length() - 4);
+  }
+
+  public String getGeminiArgonModelId()
+  {
+    return getStr("geminiArgonModelId", "gemini-2.5-pro");
+  }
+
+  public void setGeminiArgonModelId(String modelId)
+  {
+    setStr("geminiArgonModelId", modelId);
+  }
+
+  public String getGoogleOAuthClientId()
+  {
+    return getStr("googleOAuthClientId", "");
+  }
+
+  public void setGoogleOAuthClientId(String clientId)
+  {
+    setStr("googleOAuthClientId", clientId);
+  }
+
+  public String getGoogleOAuthClientSecret()
+  {
+    return getSecret("googleOAuthClientSecret", "");
+  }
+
+  public void setGoogleOAuthClientSecret(String secret)
+  {
+    setSecret("googleOAuthClientSecret", secret);
+  }
+
+  public String getGoogleOAuthProjectId()
+  {
+    return getStr("googleOAuthProjectId", "");
+  }
+
+  public void setGoogleOAuthProjectId(String projectId)
+  {
+    setStr("googleOAuthProjectId", projectId);
+  }
+
+  public String getGoogleAccessToken()
+  {
+    return getSecret("googleAccessToken", "");
+  }
+
+  public void setGoogleAccessToken(String token)
+  {
+    setSecret("googleAccessToken", token);
+  }
+
+  public String getGoogleRefreshToken()
+  {
+    return getSecret("googleRefreshToken", "");
+  }
+
+  public void setGoogleRefreshToken(String token)
+  {
+    setSecret("googleRefreshToken", token);
+  }
+
+  public long getGoogleTokenExpiryMs()
+  {
+    try
+    {
+      return Long.parseLong(getStr("googleTokenExpiryMs", "0"));
+    }
+    catch (NumberFormatException e)
+    {
+      return 0L;
+    }
+  }
+
+  public void setGoogleTokenExpiryMs(long expiryMs)
+  {
+    setStr("googleTokenExpiryMs", Long.toString(expiryMs));
+  }
+
+  public String getGoogleUserEmail()
+  {
+    return getStr("googleUserEmail", "");
+  }
+
+  public void setGoogleUserEmail(String email)
+  {
+    setStr("googleUserEmail", email);
+  }
+
+  public boolean isGoogleSignedIn()
+  {
+    return !getGoogleAccessToken().isEmpty() || !getGoogleRefreshToken().isEmpty();
+  }
+
+  public boolean isGooglePersonalReady()
+  {
+    return !getGeminiApiKey().isEmpty() || isGoogleSignedIn();
+  }
+
+  public void clearGoogleAuth()
+  {
+    setGoogleAccessToken("");
+    setGoogleRefreshToken("");
+    setGoogleTokenExpiryMs(0L);
+    setGoogleUserEmail("");
+    save();
+  }
+
   // ---- Company AI Gateway / Model Farm (https://aoai-farm.bosch-temp.com) ----
 
   public String getModelFarmDomain()
@@ -186,9 +563,14 @@ public final class EddiesAiConfig
     setStr("modelFarmDomain", domain);
   }
 
+  public String getStoredModelFarmApiKeyOnly()
+  {
+    return sanitizeKey(getSecret("modelFarmApiKey", ""));
+  }
+
   public String getModelFarmApiKey()
   {
-    String key = getStr("modelFarmApiKey", "");
+    String key = getStoredModelFarmApiKeyOnly();
     if (key.isEmpty())
     {
       String[] envVars = {
@@ -213,7 +595,7 @@ public final class EddiesAiConfig
 
   public void setModelFarmApiKey(String key)
   {
-    setStr("modelFarmApiKey", sanitizeKey(key));
+    setSecret("modelFarmApiKey", sanitizeKey(key));
   }
 
   public String getModelFarmSubscriptionId()
@@ -267,127 +649,6 @@ public final class EddiesAiConfig
   public void setModelFarmProxyPort(int port)
   {
     setStr("modelFarmProxyPort", Integer.toString(port));
-  }
-
-  // ---- Google Gemini API & Google Account OAuth 2.0 ----
-
-  public String getGeminiApiKey()
-  {
-    String key = getStr("geminiApiKey", "");
-    if (key.isEmpty())
-    {
-      String env = safeGetenv("GEMINI_API_KEY");
-      if (env != null && !env.trim().isEmpty()) return sanitizeKey(env);
-      env = safeGetenv("GOOGLE_API_KEY");
-      if (env != null && !env.trim().isEmpty()) return sanitizeKey(env);
-    }
-    return sanitizeKey(key);
-  }
-
-  public void setGeminiApiKey(String key)
-  {
-    setStr("geminiApiKey", sanitizeKey(key));
-  }
-
-  public String getGeminiArgonModelId()
-  {
-    return getStr("geminiArgonModelId", "gemini-2.5-pro");
-  }
-
-  public void setGeminiArgonModelId(String modelId)
-  {
-    setStr("geminiArgonModelId", modelId);
-  }
-
-  public String getGoogleOAuthClientId()
-  {
-    return getStr("googleOAuthClientId", "");
-  }
-
-  public void setGoogleOAuthClientId(String clientId)
-  {
-    setStr("googleOAuthClientId", clientId);
-  }
-
-  public String getGoogleOAuthClientSecret()
-  {
-    return getStr("googleOAuthClientSecret", "");
-  }
-
-  public void setGoogleOAuthClientSecret(String secret)
-  {
-    setStr("googleOAuthClientSecret", secret);
-  }
-
-  public String getGoogleOAuthProjectId()
-  {
-    return getStr("googleOAuthProjectId", "");
-  }
-
-  public void setGoogleOAuthProjectId(String projectId)
-  {
-    setStr("googleOAuthProjectId", projectId);
-  }
-
-  public String getGoogleAccessToken()
-  {
-    return getStr("googleAccessToken", "");
-  }
-
-  public void setGoogleAccessToken(String token)
-  {
-    setStr("googleAccessToken", token);
-  }
-
-  public String getGoogleRefreshToken()
-  {
-    return getStr("googleRefreshToken", "");
-  }
-
-  public void setGoogleRefreshToken(String token)
-  {
-    setStr("googleRefreshToken", token);
-  }
-
-  public long getGoogleTokenExpiryMs()
-  {
-    try
-    {
-      return Long.parseLong(getStr("googleTokenExpiryMs", "0"));
-    }
-    catch (NumberFormatException e)
-    {
-      return 0L;
-    }
-  }
-
-  public void setGoogleTokenExpiryMs(long expiryMs)
-  {
-    setStr("googleTokenExpiryMs", Long.toString(expiryMs));
-  }
-
-  public String getGoogleUserEmail()
-  {
-    return getStr("googleUserEmail", "");
-  }
-
-  public void setGoogleUserEmail(String email)
-  {
-    setStr("googleUserEmail", email);
-  }
-
-  public boolean isGoogleSignedIn()
-  {
-    return !getGoogleAccessToken().isEmpty() || !getGoogleRefreshToken().isEmpty();
-  }
-
-  public void clearGoogleAuth()
-  {
-    setGoogleAccessToken("");
-    setGoogleRefreshToken("");
-    setGoogleTokenExpiryMs(0L);
-    setGoogleUserEmail("");
-    save();
   }
 
   // ---- Company Copilot Account (Microsoft 365 Work SSO / Entra ID & GitHub Copilot) ----
@@ -444,7 +705,7 @@ public final class EddiesAiConfig
 
   public String getCopilotAccessToken()
   {
-    String token = getStr("copilotAccessToken", "");
+    String token = getSecret("copilotAccessToken", "");
     if (token.isEmpty())
     {
       String env = safeGetenv("GITHUB_TOKEN");
@@ -455,17 +716,17 @@ public final class EddiesAiConfig
 
   public void setCopilotAccessToken(String token)
   {
-    setStr("copilotAccessToken", sanitizeKey(token));
+    setSecret("copilotAccessToken", sanitizeKey(token));
   }
 
   public String getCopilotRefreshToken()
   {
-    return getStr("copilotRefreshToken", "");
+    return getSecret("copilotRefreshToken", "");
   }
 
   public void setCopilotRefreshToken(String token)
   {
-    setStr("copilotRefreshToken", token);
+    setSecret("copilotRefreshToken", token);
   }
 
   public long getCopilotTokenExpiryMs()
@@ -513,7 +774,7 @@ public final class EddiesAiConfig
 
   public String getOpenAiApiKey()
   {
-    String key = getStr("openAiApiKey", "");
+    String key = getSecret("openAiApiKey", "");
     if (key.isEmpty())
     {
       String env = safeGetenv("OPENAI_API_KEY");
@@ -524,12 +785,12 @@ public final class EddiesAiConfig
 
   public void setOpenAiApiKey(String key)
   {
-    setStr("openAiApiKey", sanitizeKey(key));
+    setSecret("openAiApiKey", sanitizeKey(key));
   }
 
   public String getAnthropicApiKey()
   {
-    String key = getStr("anthropicApiKey", "");
+    String key = getSecret("anthropicApiKey", "");
     if (key.isEmpty())
     {
       String env = safeGetenv("ANTHROPIC_API_KEY");
@@ -540,7 +801,7 @@ public final class EddiesAiConfig
 
   public void setAnthropicApiKey(String key)
   {
-    setStr("anthropicApiKey", sanitizeKey(key));
+    setSecret("anthropicApiKey", sanitizeKey(key));
   }
 
   public String getOllamaUrl()
@@ -584,60 +845,44 @@ public final class EddiesAiConfig
   public String getAuthSummaryBadge()
   {
     String model = getSelectedModel();
-    if (model.contains("Model Farm") || model.contains("gpt-5-nano") || model.contains("askbosch"))
+    boolean wantsGooglePersonal = model.contains("Google Ultra")
+      || model.contains("Google Personal")
+      || model.contains("Argon")
+      || (model.toLowerCase().contains("gemini") && !model.contains("Company Farm"));
+
+    if (wantsGooglePersonal)
     {
-      if (!getModelFarmApiKey().isEmpty())
+      if (!getGeminiApiKey().isEmpty())
       {
-        return "Model Farm: Key Ready";
+        String src = isGeminiApiKeyFromEnv() ? "Env Var" : "Encrypted Key";
+        return "Google Ultra: Ready (" + src + " " + maskSecretPreview(getGeminiApiKey()) + ")";
       }
-      if (isCopilotSignedIn())
-      {
-        return "Model Farm / SSO: " + getCopilotUserDisplay();
-      }
-      return "Model Farm: Needs Key";
-    }
-    if (model.contains("Copilot"))
-    {
-      if (isCopilotSignedIn())
-      {
-        String user = getCopilotUserDisplay();
-        return "M365 SSO: " + (user.isEmpty() ? "Signed In" : user);
-      }
-      if (!getModelFarmApiKey().isEmpty())
-      {
-        return "Copilot / Farm: Key Ready";
-      }
-      return "M365 Copilot: Not Signed In";
-    }
-    if (model.contains("Gemini"))
-    {
       if (isGoogleSignedIn())
       {
         String email = getGoogleUserEmail();
-        return "Google: " + (email.isEmpty() ? "Signed In" : email);
-      }
-      if (!getGeminiApiKey().isEmpty())
-      {
-        return "Gemini: API Key Ready";
+        return "Google Ultra OAuth: " + (email.isEmpty() ? "Signed In" : email);
       }
       if (!getModelFarmApiKey().isEmpty())
       {
-        return "Gemini (via Model Farm)";
+        return "Google Key Not Set (Will Fallback to Company Farm)";
       }
-      return "Google: Not Signed In";
+      return "Needs Google API Key — Click 'Account' above";
     }
-    if (model.contains("Claude"))
+
+    if (!getModelFarmApiKey().isEmpty())
     {
-      if (!getAnthropicApiKey().isEmpty()) return "Claude: Key Ready";
-      if (!getModelFarmApiKey().isEmpty()) return "Claude (via Model Farm)";
-      return "Claude: No Key";
+      String domain = getModelFarmDomain();
+      String subId = getModelFarmSubscriptionId();
+      return "Company Farm: Ready (" + domain + (subId.isEmpty() ? ")" : " | SubID set)");
     }
-    if (model.contains("GPT"))
+    if (isCopilotSignedIn())
     {
-      if (!getOpenAiApiKey().isEmpty()) return "OpenAI: Key Ready";
-      if (!getModelFarmApiKey().isEmpty()) return "OpenAI (via Model Farm)";
-      return "OpenAI: No Key";
+      return "M365 SSO: " + getCopilotUserDisplay();
     }
-    return "Local Ollama";
+    if (!getGeminiApiKey().isEmpty())
+    {
+      return "Google Personal Key Ready (" + maskSecretPreview(getGeminiApiKey()) + ")";
+    }
+    return "Needs Key/Login — Click 'Account' above";
   }
 }
