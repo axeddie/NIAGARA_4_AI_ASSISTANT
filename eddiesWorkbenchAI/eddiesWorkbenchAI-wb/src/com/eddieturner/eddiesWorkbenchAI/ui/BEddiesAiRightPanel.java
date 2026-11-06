@@ -103,6 +103,7 @@ public final class BEddiesAiRightPanel
     {
       EddiesAiConfig cfg = EddiesAiConfig.get();
       cfg.load();
+      EddiesAiBrainManager.ensureInitialized();
       if (cfg.getSelectedModel() != null && !cfg.getSelectedModel().isEmpty())
       {
         this.currentSelectedModel = cfg.getSelectedModel();
@@ -286,6 +287,17 @@ public final class BEddiesAiRightPanel
           }
         });
       }
+      else if ("brain".equals(cmd))
+      {
+        EddiesAiBrainDialog.open(rootPane, shell, new Runnable()
+        {
+          @Override
+          public void run()
+          {
+            setStatusText("AI Brain & Reference Folders updated: " + EddiesAiConfig.get().getAiBrainDirPath());
+          }
+        });
+      }
       else if ("clearChat".equals(cmd))
       {
         resetConversation();
@@ -460,6 +472,27 @@ public final class BEddiesAiRightPanel
       return;
     }
 
+    if (prompt.equalsIgnoreCase("/brain") || prompt.equalsIgnoreCase("/rules"))
+    {
+      EddiesAiBrainDialog.open(rootPane, shell, null);
+      return;
+    }
+
+    if (prompt.regionMatches(true, 0, "/learn ", 0, 7))
+    {
+      String ruleToLearn = prompt.substring(7).trim();
+      if (!ruleToLearn.isEmpty())
+      {
+        String savedMsg = EddiesAiBrainManager.appendGlobalRule(ruleToLearn, "User Rule");
+        appendSystemMessage(
+          "Learned & Saved to AI Brain",
+          savedMsg + "\nBrain Folder: " + EddiesAiConfig.get().getAiBrainDirPath(),
+          false);
+        setStatusText("Saved new rule to global_rules.md");
+        return;
+      }
+    }
+
     EddiesAiConfig.get().setAutoApplyChanges(autoApplySelected);
     EddiesAiConfig.get().save();
 
@@ -468,6 +501,7 @@ public final class BEddiesAiRightPanel
     final String selectedModel = (currentSelectedModel != null && !currentSelectedModel.isEmpty())
       ? currentSelectedModel
       : EddiesAiConfig.DEFAULT_MODEL;
+    final String activeStationKey = EddiesAiBrainManager.resolveActiveStationKey(shell);
 
     String ctxSummary = (includeContextSelected && lastSyncedTarget != null) ? lastSyncedTarget.summaryLabel : "";
     final String fullContextBlock = (includeContextSelected && lastSyncedTarget != null)
@@ -483,6 +517,7 @@ public final class BEddiesAiRightPanel
 
     activeRequestThread = EddiesAiClient.sendPromptAsync(
       selectedModel,
+      activeStationKey,
       fullContextBlock,
       prompt,
       new EddiesAiClient.AiResponseCallback()
@@ -551,6 +586,7 @@ public final class BEddiesAiRightPanel
 
       activeRequestThread = EddiesAiClient.sendPromptAsync(
         selectedUiModel,
+        EddiesAiBrainManager.resolveActiveStationKey(shell),
         augmentedContext,
         followUpPrompt,
         new EddiesAiClient.AiResponseCallback()
@@ -592,6 +628,8 @@ public final class BEddiesAiRightPanel
 
     setWorkingState(false, "");
 
+    // Check if the AI learned any rules, station memories, or skills (<ai-learn>) from the user's feedback
+    List<Map<String, String>> learnReqs = EddiesAiBrainManager.extractLearnRequests(responseText);
     String cleanDisplay = StationActionExecutor.stripActionTagsForDisplay(responseText);
     if (!extractedPlan.isEmpty())
     {
@@ -603,6 +641,15 @@ public final class BEddiesAiRightPanel
       + jsStr(usedModel) + ", "
       + jsStr(cleanDisplay) + ", "
       + extractedPlan.size() + ");");
+
+    if (!learnReqs.isEmpty() && EddiesAiConfig.get().isAutoLearnEnabled())
+    {
+      String learnedLog = EddiesAiBrainManager.executeLearnRequests(shell, learnReqs);
+      if (learnedLog != null && !learnedLog.trim().isEmpty())
+      {
+        appendSystemMessage("Learned & Saved to AI Brain", learnedLog, false);
+      }
+    }
 
     updateActionButtonsState();
     setStatusText("Response received at " + timestamp);

@@ -4,7 +4,7 @@
 **Target Platform:** Niagara 4 (`C:\Niagara\EC-Net Facilities-4.15.4.24`)  
 **Module Type:** Workbench UI Module (`eddiesWorkbenchAI-wb`)  
 **Company AI Reference:** `C:\_MODEL_FARM` (`https://aoai-farm.bosch-temp.com` & Microsoft 365 Work Account SSO)  
-**Last Updated:** 2026-11-03  
+**Last Updated:** 2026-11-05  
 
 ---
 
@@ -13,8 +13,16 @@
 1. **Personal Google Account (Direct Gemini API) & Company AI Platform Integration**
    - Supports **Personal Google Account** via Google's official Generative Language API (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`) using a personal Google AI Studio API Key (masked in UI with `PasswordRenderer` and encrypted on disk with AES-GCM-256 + Windows user/machine-bound PBKDF2 key, or read from `GEMINI_API_KEY` / `GOOGLE_API_KEY` environment variables) or Google Browser OAuth 2.0 + PKCE.
    - Also supports **Company Copilot / Company AI Platform subscription** (`https://aoai-farm.bosch-temp.com` and corporate Microsoft 365 Work Account SSO).
-   - Supports personal Google models (`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`) alongside verified company models (`gpt-5-nano-2025-08-07`, `askbosch-prod-farm-openai-gpt-4o-mini-2024-07-18`, `gemini-2.5-flash-lite`, `gemini-3.5-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gpt-5-2025-08-07`, `gpt-5.6-sol-2026-07-09`, `claude-sonnet-4-5@20250929`, `claude-opus-4-8`).
+   - Supports personal Google models (`Gemini 4 Argon (Medium)`, `Gemini 4 Argon (High)`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`) alongside verified company models (`gpt-5-nano-2025-08-07`, `askbosch-prod-farm-openai-gpt-4o-mini-2024-07-18`, `gemini-2.5-flash-lite`, `gemini-3.5-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gpt-5-2025-08-07`, `gpt-5.6-sol-2026-07-09`, `claude-sonnet-4-5@20250929`, `claude-opus-4-8`).
    - Sends the required company gateway headers (`genaiplatform-farm-subscription-key`, `genaiplatform-farm-subscription-id`, `Authorization: Bearer`, `Ocp-Apim-Subscription-Key`) and supports optional local Px proxy (`127.0.0.1:3128`) as well as Microsoft 365 Work Account Browser SSO (`login.microsoftonline.com`).
+
+2. **Persistent Local AI Brain Workspace, Continuous Learning & User-Granted Reference Folders**
+   - Maintains a persistent local **AI Brain Workspace** on the user's machine (defaulting to `<NiagaraUserHome>/eddiesWorkbenchAI`, or any custom folder selected by the user in the **Brain** dialog):
+     - `rules/global_rules.md` — Permanent global rules, naming standards, and preferences learned from user feedback or `/learn`.
+     - `stations/<StationName>.md` — Per-station learned memory, architecture notes, and equipment context automatically matched to the active station.
+     - `skills/<skill_name>.md` — Reusable logic patterns, `.bog` templates, `BProgram` snippets, and `.px` graphic templates.
+     - `chats/learned_log.md` — Audit log of all rules, memories, and skills saved over time.
+   - Allows any user to grant the AI Assistant read & search access to **Local Niagara Reference & Knowledge Folders** on their machine (e.g., Niagara docs, PX template libraries, BOG libraries, controller references), indexed automatically in every prompt and searchable via `<station-inspect>` `searchKnowledge`.
 
 2. **Station-Aware Context (Active View Integration)**
    - Works specifically on the **Niagara Station** (and specific `BComponent`, WireSheet, Folder, `BProgram`, or `.px` graphic) currently showing in the active Niagara Workbench view (`BWbShell.getActiveView()` / `BWbShell.getActiveOrd()`).
@@ -74,5 +82,7 @@
 - `src/com/eddieturner/eddiesWorkbenchAI/ui/StationContextExtractor.java` — Extracts live station & file context from the active Workbench view (`BWbShell.getActiveView()` / `BWbShell.getActiveOrd()`).
 - `src/com/eddieturner/eddiesWorkbenchAI/ui/StationActionExecutor.java` — Universal station & file modification engine supporting live execution (`Proceed`), offline duplicate generation (`Make Duplicate Only`), and full Snapshot Undo.
 - `src/com/eddieturner/eddiesWorkbenchAI/ui/WiresheetLayoutEngine.java` — Intelligent WireSheet layout engine separating unlinked blocks from connected logic chains using left-to-right topological signal-flow layering and dynamic `wixelWidth` sizing.
+- `src/com/eddieturner/eddiesWorkbenchAI/ui/EddiesAiBrainManager.java` — Manages the local persistent AI Brain Workspace (`rules/global_rules.md`, `stations/<StationName>.md`, `skills/*.md`, `chats/learned_log.md`), parses and executes `<ai-learn>` learning blocks from user feedback, builds the per-turn AI Brain & Reference Folders context block, and performs recursive `searchKnowledge` queries across the Brain and user-granted Reference Folders.
+- `src/com/eddieturner/eddiesWorkbenchAI/ui/EddiesAiBrainDialog.java` — Modal `BDialog` (opened via the **Brain** button in the top header or `/brain` / `/rules`) for choosing the AI Brain Workspace folder, adding/removing User-Granted Local Niagara Reference Folders, and viewing/editing `global_rules.md` and `stations/<StationName>.md` directly inside Workbench.
 - `src/com/eddieturner/eddiesWorkbenchAI/ui/EddiesAiHomePageCustomizer.java` — Enhances the Niagara Workbench Home / About page (`workbench:/help/about.html`) with AI-Powered Workbench vector graphics and neural-wiresheet SVG diagrams.
 

@@ -133,6 +133,14 @@ public final class StationInspector
           String dirStr = firstNonEmpty(req.get("dir"), req.get("ord"), req.get("path"), "station:|file:^");
           listFilesInto(baseComp, activeFile, dirStr, out);
         }
+        else if ("searchKnowledge".equalsIgnoreCase(op)
+          || "searchFiles".equalsIgnoreCase(op)
+          || "searchBrain".equalsIgnoreCase(op)
+          || "search".equalsIgnoreCase(op))
+        {
+          String queryStr = firstNonEmpty(req.get("query"), req.get("search"), req.get("keyword"), req.get("text"));
+          EddiesAiBrainManager.searchBrainAndReferenceFolders(queryStr, out);
+        }
         else
         {
           out.append("Unknown inspection type: ").append(op).append("\n");
@@ -400,7 +408,21 @@ public final class StationInspector
     String searchFilter,
     StringBuilder sb) throws Exception
   {
-    byte[] bytes = StationActionExecutor.readAnyFileBytes(baseComp, activeFile, fileSpec);
+    String resolvedSpec = fileSpec;
+    if (resolvedSpec != null && resolvedSpec.trim().toLowerCase().startsWith("brain:"))
+    {
+      String rel = resolvedSpec.trim().substring("brain:".length()).trim();
+      resolvedSpec = new File(EddiesAiBrainManager.ensureInitialized(), rel).getAbsolutePath();
+    }
+    byte[] bytes = StationActionExecutor.readAnyFileBytes(baseComp, activeFile, resolvedSpec);
+    if (bytes == null && resolvedSpec != null)
+    {
+      File brainRel = new File(EddiesAiBrainManager.ensureInitialized(), resolvedSpec.trim());
+      if (brainRel.exists() && brainRel.isFile())
+      {
+        bytes = readLocalFileBytes(brainRel);
+      }
+    }
     if (bytes == null)
     {
       sb.append("File not found: ").append(fileSpec).append("\n");
@@ -481,6 +503,12 @@ public final class StationInspector
       File nuh = Sys.getNiagaraUserHome();
       String sub = clean.length() > 6 ? clean.substring(6) : "";
       localDir = sub.isEmpty() ? nuh : new File(nuh, sub);
+    }
+    else if ("brain:".equalsIgnoreCase(clean) || clean.toLowerCase().startsWith("brain:"))
+    {
+      File brainRoot = EddiesAiBrainManager.ensureInitialized();
+      String sub = clean.length() > 6 ? clean.substring(6).trim() : "";
+      localDir = sub.isEmpty() ? brainRoot : new File(brainRoot, sub);
     }
     else
     {

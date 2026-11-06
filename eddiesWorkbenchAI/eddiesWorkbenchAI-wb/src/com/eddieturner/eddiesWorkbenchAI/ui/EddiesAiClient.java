@@ -37,11 +37,12 @@ public final class EddiesAiClient
     + "1. WHEN THE USER ASKS A QUESTION OR REQUESTS EXPLANATION / BQL / TROUBLESHOOTING:\n"
     + "- Provide a clear, concise, technical response referencing the exact components, properties, facets, links, and files in the active view context.\n\n"
     + "2. AGENTIC INSPECTION (<station-inspect>[ ... ]</station-inspect>):\n"
-    + "- If you need to inspect another station component/folder by ORD, run a BQL query across the station, list a directory, or read lines of a file before making changes, output a <station-inspect>[ ... ]</station-inspect> block:\n"
+    + "- If you need to inspect another station component/folder by ORD, run a BQL query across the station, list a directory, read lines of a file, or search the user's AI Brain & Local Niagara Reference Folders before making changes, output a <station-inspect>[ ... ]</station-inspect> block:\n"
     + "  * {\"inspect\": \"inspectOrd\", \"ord\": \"station:|slot:/Drivers/BcpBacnetNetwork\"}\n"
     + "  * {\"inspect\": \"runBql\", \"query\": \"station:|slot:/|bql:select name, out, slotPath from control:ControlPoint\"}\n"
     + "  * {\"inspect\": \"readFile\", \"file\": \"station:|file:^px/Main.px\", \"startLine\": 1, \"endLine\": 300}\n"
-    + "  * {\"inspect\": \"listFiles\", \"dir\": \"station:|file:^\"}\n\n"
+    + "  * {\"inspect\": \"listFiles\", \"dir\": \"station:|file:^\"}\n"
+    + "  * {\"inspect\": \"searchKnowledge\", \"query\": \"ScrollPane\"}\n\n"
     + "3. WHEN THE USER ASKS TO CREATE, MODIFY, SET, LINK, RENAME, DELETE, OR EDIT ANYTHING IN THE STATION OR WORKBENCH FILES:\n"
     + "- Briefly explain what you are doing, and output a <station-actions>...</station-actions> block containing a valid JSON array of action objects.\n"
     + "- Note: Every modification plan automatically opens Eddie's Guardrail Confirmation Dialog ('Cancel' | 'Make Duplicate Only' | 'Proceed') and is backed by full Snapshot Undo.\n"
@@ -84,7 +85,13 @@ public final class EddiesAiClient
     + "     - {\"action\": \"writeFile\", \"file\": \"station:|file:^px/NewGraphic.px\", \"content\": \"...\"}\n"
     + "     - {\"action\": \"copyFile\", \"source\": \"station:|file:^px/A.px\", \"target\": \"station:|file:^px/B.px\"} / {\"action\": \"renameFile\", ...} / {\"action\": \"deleteFile\", ...} / {\"action\": \"makeDir\", \"dir\": \"station:|file:^px/Sub\"}\n"
     + "     - {\"action\": \"importBog\", \"parent\": \"activeTarget\", \"bog\": \"<bajaObjectGraph version=\\\"4.0\\\">...</bajaObjectGraph>\"}\n"
-    + "     - {\"action\": \"arrangeWiresheet\", \"parent\": \"activeTarget\"}\n";
+    + "     - {\"action\": \"arrangeWiresheet\", \"parent\": \"activeTarget\"}\n\n"
+    + "4. PERSISTENT LEARNING — SAVING RULES, STATION MEMORY & SKILLS (<ai-learn>[ ... ]</ai-learn>):\n"
+    + "- You have a persistent local AI Brain workspace on the user's computer (shown in the AI BRAIN block below).\n"
+    + "- Whenever the user gives you feedback, corrects a mistake, states a rule or preference (e.g., 'Always...', 'Never...', 'Remember...', 'From now on...'), shares architecture notes about the current station, or asks you to save a reusable skill/template, output an <ai-learn>[ ... ]</ai-learn> JSON array so it is permanently saved to disk for future sessions:\n"
+    + "  * {\"learn\": \"saveRule\", \"category\": \"Points\", \"rule\": \"Always use control:NumericWritable with fallback set for setpoints instead of NumericPoint.\"}\n"
+    + "  * {\"learn\": \"saveStationMemory\", \"station\": \"activeStation\", \"memory\": \"AHU-1 serves Floors 1-3; BACnet trunks are under /Drivers/BcpBacnetNetwork.\"}\n"
+    + "  * {\"learn\": \"saveSkill\", \"name\": \"vav_reheat_standard\", \"description\": \"Standard VAV reheat logic and facets\", \"content\": \"...\"}\n";
 
   private EddiesAiClient()
   {
@@ -180,6 +187,16 @@ public final class EddiesAiClient
     final String userPrompt,
     final AiResponseCallback callback)
   {
+    return sendPromptAsync(selectedUiModel, "ActiveStation", stationContextBlock, userPrompt, callback);
+  }
+
+  public static Thread sendPromptAsync(
+    final String selectedUiModel,
+    final String activeStationKey,
+    final String stationContextBlock,
+    final String userPrompt,
+    final AiResponseCallback callback)
+  {
     Thread worker = new Thread(new Runnable()
     {
       @Override
@@ -190,15 +207,26 @@ public final class EddiesAiClient
           EddiesAiConfig cfg = EddiesAiConfig.get();
           cfg.load();
 
-          String fullUserContent;
+          String brainBlock = "";
+          try
+          {
+            brainBlock = EddiesAiBrainManager.buildBrainPromptBlock(activeStationKey);
+          }
+          catch (Throwable ignore)
+          {
+          }
+
+          StringBuilder combinedCtx = new StringBuilder();
+          if (brainBlock != null && !brainBlock.trim().isEmpty())
+          {
+            combinedCtx.append(brainBlock.trim()).append("\n\n");
+          }
           if (stationContextBlock != null && !stationContextBlock.trim().isEmpty())
           {
-            fullUserContent = stationContextBlock + "\n\nUSER PROMPT:\n" + userPrompt;
+            combinedCtx.append(stationContextBlock.trim()).append("\n\n");
           }
-          else
-          {
-            fullUserContent = userPrompt;
-          }
+          combinedCtx.append("USER PROMPT:\n").append(userPrompt);
+          String fullUserContent = combinedCtx.toString();
 
           boolean useGooglePersonal = isPersonalGoogleSelection(selectedUiModel, cfg);
 

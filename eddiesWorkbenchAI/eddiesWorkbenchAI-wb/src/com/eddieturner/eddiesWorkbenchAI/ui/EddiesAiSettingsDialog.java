@@ -439,6 +439,52 @@ public final class EddiesAiSettingsDialog
     sec1Box.setFill(BBrush.makeSolid(BColor.make(246, 248, 252)));
     sec1Box.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(205, 214, 228))));
 
+    // ============================================================================
+    // Section 3: AI Brain Workspace, Learned Rules & Local Reference Folders
+    // ============================================================================
+    BLabel secBrainTitle = new BLabel("3. AI Brain Workspace, Learned Rules & Local Reference Folders", headerFont);
+    secBrainTitle.setForeground(BBrush.makeSolid(BColor.make(95, 50, 125)));
+
+    final BLabel brainPathSummary = new BLabel(
+      "Brain Folder: " + cfg.getAiBrainDirPath()
+      + "  |  Reference Folders: " + cfg.getReferenceFolders().size(),
+      smallFont);
+    brainPathSummary.setForeground(BBrush.makeSolid(BColor.make(65, 75, 95)));
+
+    Command openBrainDialogCmd = new Command(owner, "Manage AI Brain, Learned Rules & Reference Folders...")
+    {
+      @Override
+      public CommandArtifact doInvoke()
+      {
+        EddiesAiBrainDialog.open(owner, shell, new Runnable()
+        {
+          @Override
+          public void run()
+          {
+            brainPathSummary.setText(
+              "Brain Folder: " + cfg.getAiBrainDirPath()
+              + "  |  Reference Folders: " + cfg.getReferenceFolders().size());
+            brainPathSummary.relayout();
+            brainPathSummary.repaint();
+          }
+        });
+        return null;
+      }
+    };
+    BButton openBrainDialogBtn = new BButton(openBrainDialogCmd, true, false);
+
+    BGridPane secBrainStack = new BGridPane(1);
+    secBrainStack.setRowGap(5.0);
+    secBrainStack.setStretchColumn(0);
+    secBrainStack.setColumnAlign(BHalign.left);
+    secBrainStack.add("bt", secBrainTitle);
+    secBrainStack.add("bs", brainPathSummary);
+    secBrainStack.add("bb", openBrainDialogBtn);
+
+    BBorderPane secBrainBox = new BBorderPane(secBrainStack, BInsets.make(8.0, 10.0, 8.0, 10.0));
+    secBrainBox.setFill(BBrush.makeSolid(BColor.make(249, 245, 253)));
+    secBrainBox.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(210, 195, 228))));
+
     // ---- Main Dialog Layout ----
     BGridPane mainStack = new BGridPane(1);
     mainStack.setRowGap(10.0);
@@ -446,6 +492,7 @@ public final class EddiesAiSettingsDialog
     mainStack.setColumnAlign(BHalign.left);
     mainStack.add("sec1", sec1Box);
     mainStack.add("secGoogle", secGoogleBox);
+    mainStack.add("secBrain", secBrainBox);
     mainStack.add("status", new BBorderPane(statusBanner, BInsets.make(2.0, 4.0, 2.0, 4.0)));
 
     final BDialog[] dialogRef = new BDialog[1];

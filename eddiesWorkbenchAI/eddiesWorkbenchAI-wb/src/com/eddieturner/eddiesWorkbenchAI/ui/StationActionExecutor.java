@@ -139,7 +139,8 @@ public final class StationActionExecutor
       {
         Map<String, String> item = parsed.get(i);
         if ((item.get("action") != null && !item.get("action").trim().isEmpty())
-          || (item.get("inspect") != null && !item.get("inspect").trim().isEmpty()))
+          || (item.get("inspect") != null && !item.get("inspect").trim().isEmpty())
+          || (item.get("learn") != null && !item.get("learn").trim().isEmpty()))
         {
           valid.add(item);
         }
@@ -152,14 +153,42 @@ public final class StationActionExecutor
     }
   }
 
+  public static List<Map<String, String>> parseActionPlanLenient(String rawJson)
+  {
+    List<Map<String, String>> empty = new ArrayList<Map<String, String>>();
+    if (rawJson == null || rawJson.trim().isEmpty()) return empty;
+    String arr = extractJsonArray(rawJson);
+    if (arr == null || arr.isEmpty())
+    {
+      String trimmed = rawJson.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}"))
+      {
+        arr = "[" + trimmed + "]";
+      }
+      else
+      {
+        return empty;
+      }
+    }
+    try
+    {
+      return parseActionPlan(arr);
+    }
+    catch (Exception e)
+    {
+      return empty;
+    }
+  }
+
   /**
-   * Strips the raw <station-actions>...</station-actions> and <station-inspect>...</station-inspect>
-   * blocks from the display text so the conversation stays clean and readable.
+   * Strips the raw <station-actions>...</station-actions>, <station-inspect>...</station-inspect>,
+   * and <ai-learn>...</ai-learn> blocks from the display text so the conversation stays clean and readable.
    */
   public static String stripActionTagsForDisplay(String responseText)
   {
     if (responseText == null) return "";
     String cleaned = StationInspector.stripInspectTagsForDisplay(responseText);
+    cleaned = EddiesAiBrainManager.stripLearnTagsForDisplay(cleaned);
     int tagStart = cleaned.indexOf("<station-actions>");
     int tagEnd = cleaned.indexOf("</station-actions>");
     if (tagStart >= 0 && tagEnd > tagStart)

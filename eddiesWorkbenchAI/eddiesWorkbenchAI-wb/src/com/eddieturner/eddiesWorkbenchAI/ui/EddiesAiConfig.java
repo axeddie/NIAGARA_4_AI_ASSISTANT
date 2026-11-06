@@ -9,8 +9,10 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.spec.KeySpec;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import javax.baja.sys.Sys;
@@ -852,6 +854,164 @@ public final class EddiesAiConfig
   public void setOllamaModel(String model)
   {
     setStr("ollamaModel", model);
+  }
+
+  // ---- AI Brain Workspace, Learned Rules & User-Granted Local Reference Folders ----
+
+  /**
+   * Returns the default AI Brain Workspace directory inside the Niagara User Home
+   * (e.g., {@code <NiagaraUserHome>/eddiesWorkbenchAI}).
+   */
+  public static String getDefaultAiBrainDirPath()
+  {
+    try
+    {
+      File nuh = Sys.getNiagaraUserHome();
+      if (nuh != null)
+      {
+        return new File(nuh, "eddiesWorkbenchAI").getAbsolutePath();
+      }
+    }
+    catch (Throwable ignore)
+    {
+    }
+    String home = safeGetProperty("user.home", ".");
+    return new File(new File(home, ".eddiesWorkbenchAI"), "brain").getAbsolutePath();
+  }
+
+  /**
+   * Returns the configured AI Brain Workspace directory path (falling back to the default
+   * in Niagara User Home if not customized).
+   */
+  public String getAiBrainDirPath()
+  {
+    String custom = getStr("aiBrainDir", "");
+    if (!custom.isEmpty())
+    {
+      return custom;
+    }
+    return getDefaultAiBrainDirPath();
+  }
+
+  public void setAiBrainDirPath(String dirPath)
+  {
+    if (dirPath == null || dirPath.trim().isEmpty())
+    {
+      setStr("aiBrainDir", "");
+    }
+    else
+    {
+      setStr("aiBrainDir", dirPath.trim());
+    }
+  }
+
+  public File getAiBrainDir()
+  {
+    return new File(getAiBrainDirPath());
+  }
+
+  public boolean isAutoLearnEnabled()
+  {
+    return Boolean.parseBoolean(getStr("autoLearnEnabled", "true"));
+  }
+
+  public void setAutoLearnEnabled(boolean enabled)
+  {
+    setStr("autoLearnEnabled", Boolean.toString(enabled));
+  }
+
+  /**
+   * Returns the list of local reference/knowledge directories on the user's machine
+   * that the user has explicitly granted the AI Assistant read access to.
+   */
+  public synchronized List<String> getReferenceFolders()
+  {
+    List<String> list = new ArrayList<String>();
+    String raw = getStr("referenceFolders", "");
+    if (raw.isEmpty())
+    {
+      return list;
+    }
+    String[] parts = raw.split("\\|");
+    for (int i = 0; i < parts.length; i++)
+    {
+      String p = parts[i].trim();
+      if (!p.isEmpty() && !containsIgnoreCase(list, p))
+      {
+        list.add(p);
+      }
+    }
+    return list;
+  }
+
+  public synchronized void setReferenceFolders(List<String> folders)
+  {
+    if (folders == null || folders.isEmpty())
+    {
+      setStr("referenceFolders", "");
+      return;
+    }
+    StringBuilder sb = new StringBuilder();
+    List<String> seen = new ArrayList<String>();
+    for (int i = 0; i < folders.size(); i++)
+    {
+      String f = folders.get(i);
+      if (f == null) continue;
+      String clean = f.trim();
+      if (clean.isEmpty() || containsIgnoreCase(seen, clean)) continue;
+      seen.add(clean);
+      if (sb.length() > 0) sb.append('|');
+      sb.append(clean);
+    }
+    setStr("referenceFolders", sb.toString());
+  }
+
+  public synchronized boolean addReferenceFolder(String folderPath)
+  {
+    if (folderPath == null || folderPath.trim().isEmpty()) return false;
+    String clean = folderPath.trim();
+    List<String> current = getReferenceFolders();
+    if (containsIgnoreCase(current, clean))
+    {
+      return false;
+    }
+    current.add(clean);
+    setReferenceFolders(current);
+    return true;
+  }
+
+  public synchronized boolean removeReferenceFolder(String folderPath)
+  {
+    if (folderPath == null || folderPath.trim().isEmpty()) return false;
+    String clean = folderPath.trim();
+    List<String> current = getReferenceFolders();
+    boolean removed = false;
+    for (int i = current.size() - 1; i >= 0; i--)
+    {
+      if (current.get(i).equalsIgnoreCase(clean))
+      {
+        current.remove(i);
+        removed = true;
+      }
+    }
+    if (removed)
+    {
+      setReferenceFolders(current);
+    }
+    return removed;
+  }
+
+  private static boolean containsIgnoreCase(List<String> list, String candidate)
+  {
+    if (list == null || candidate == null) return false;
+    for (int i = 0; i < list.size(); i++)
+    {
+      if (candidate.equalsIgnoreCase(list.get(i)))
+      {
+        return true;
+      }
+    }
+    return false;
   }
 
   private synchronized void cleanupPlaceholderSecrets()

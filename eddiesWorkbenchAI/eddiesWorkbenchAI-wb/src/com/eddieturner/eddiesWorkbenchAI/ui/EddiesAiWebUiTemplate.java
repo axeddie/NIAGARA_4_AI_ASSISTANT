@@ -786,8 +786,9 @@ final class EddiesAiWebUiTemplate
       "      <div class=\"brand-title\">Eddie's <span>AI Assistant</span></div>\n" +
       "    </div>\n" +
       "    <div class=\"header-actions\">\n" +
+      "      <button type=\"button\" class=\"hdr-btn\" onclick=\"sendToJava('brain', '')\" title=\"Configure AI Brain Folder, Learned Rules, Station Memory &amp; Reference Knowledge Folders\">Brain</button>\n" +
       "      <button type=\"button\" class=\"hdr-btn\" onclick=\"sendToJava('account', '')\" title=\"Configure Google Gemini or Company AI Credentials\">Account</button>\n" +
-      "      <button type=\"button\" class=\"hdr-btn\" onclick=\"sendToJava('clearChat', '')\" title=\"Clear conversation history\">Clear Chat</button>\n" +
+      "      <button type=\"button\" class=\"hdr-btn\" onclick=\"sendToJava('clearChat', '')\" title=\"Clear conversation history\">Clear</button>\n" +
       "      <button type=\"button\" class=\"hdr-btn hdr-btn-close\" onclick=\"sendToJava('hidePanel', '')\" title=\"Hide Eddie's AI Panel\">Hide</button>\n" +
       "    </div>\n" +
       "  </div>\n" +
@@ -835,6 +836,7 @@ final class EddiesAiWebUiTemplate
       "    <button type=\"button\" class=\"chip-btn chip-btn-accent\" onclick=\"sendToJava('arrangeWs', '')\" title=\"Arrange all blocks on the active WireSheet (left-to-right signal flow + 5-col grid)\">&#9889; Arrange WS</button>\n" +
       "    <button type=\"button\" class=\"chip-btn\" onclick=\"fillQuickPrompt('Write or update the Niagara 4 BProgram Java code on the active target for: ')\">Program Code</button>\n" +
       "    <button type=\"button\" class=\"chip-btn\" onclick=\"fillQuickPrompt('Check this station target and its child points/links for configuration or status issues.')\">Troubleshoot</button>\n" +
+      "    <button type=\"button\" class=\"chip-btn chip-btn-accent\" onclick=\"fillQuickPrompt('/learn ')\" title=\"Save a permanent rule or preference to your local AI Brain\">+ Learn Rule</button>\n" +
       "  </div>\n" +
       "\n" +
       "  <!-- 4. Conversation Stream -->\n" +
@@ -1007,9 +1009,9 @@ final class EddiesAiWebUiTemplate
       "        '<div class=\"welcome-title\">&#9889; Eddie\\'s Workbench AI Assistant</div>' +\n" +
       "        '<div class=\"welcome-sub\">Supports your <strong>Personal Google Account</strong> (Direct Gemini API, AES-GCM-256 encrypted key) and <strong>Company AI Gateway</strong>.</div>' +\n" +
       "        '<ol class=\"welcome-list\">' +\n" +
-      "          '<li>Click <strong>Account</strong> in the top-right header to configure your Personal Google Gemini API Key or Company AI credentials.</li>' +\n" +
-      "          '<li>Ask questions about the active WireSheet, component properties, links, BProgram code, or PX view.</li>' +\n" +
-      "          '<li>Give instructions to build or modify logic (every change is protected by the 3-option Guardrail Dialog and 1-click Snapshot Undo).</li>' +\n" +
+      "          '<li>Click <strong>Account</strong> to configure your Personal Google Gemini API Key or Company AI credentials.</li>' +\n" +
+      "          '<li>Click <strong>Brain</strong> to manage your local AI Brain folder, view learned rules/station memories, or grant read access to your local Niagara reference folders.</li>' +\n" +
+      "          '<li>Give feedback or type <code>/learn &lt;rule&gt;</code> anytime to teach the assistant permanent rules &amp; templates.</li>' +\n" +
       "        '</ol>' +\n" +
       "      '</div>';\n" +
       "    setWorkingState(false, '');\n" +
