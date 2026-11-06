@@ -148,6 +148,7 @@ public final class EddiesAiClient
         try
         {
           EddiesAiConfig cfg = EddiesAiConfig.get();
+          cfg.load();
           String keyToTest = EddiesAiConfig.sanitizeKey(candidateApiKey);
           if (keyToTest.isEmpty())
           {
@@ -158,9 +159,27 @@ public final class EddiesAiClient
           {
             oauthToken = EddiesAiAuthManager.getValidGoogleAccessToken();
           }
+          if (!EddiesAiConfig.isDirectGoogleAiStudioKey(keyToTest) && oauthToken.isEmpty())
+          {
+            String farmKey = !keyToTest.isEmpty() ? keyToTest : cfg.getModelFarmApiKey();
+            if (!farmKey.isEmpty())
+            {
+              String testDeployment = "gemini-2.5-flash-lite";
+              String reply = callCompanyGateway(
+                cfg.getModelFarmDomain(),
+                farmKey,
+                cfg.getModelFarmSubscriptionId(),
+                testDeployment,
+                "You are Eddie's Niagara Workbench AI Assistant.",
+                "Reply with one short sentence confirming that Eddie's AI Assistant connection is working.",
+                cfg);
+              callback.onSuccess(reply, testDeployment + " (Saved Encrypted Key)");
+              return;
+            }
+          }
           if (keyToTest.isEmpty() && oauthToken.isEmpty())
           {
-            callback.onError("Please paste your Google Gemini API Key (or sign in via Google OAuth) first.");
+            callback.onError("Please paste your API Key (or sign in via OAuth) first.");
             return;
           }
 
@@ -200,6 +219,7 @@ public final class EddiesAiClient
         try
         {
           EddiesAiConfig cfg = EddiesAiConfig.get();
+          cfg.load();
 
           String fullUserContent;
           if (stationContextBlock != null && !stationContextBlock.trim().isEmpty())
@@ -213,10 +233,14 @@ public final class EddiesAiClient
 
           boolean useGooglePersonal = isPersonalGoogleSelection(selectedUiModel, cfg);
 
-          // Route 1: Personal Google Account (Direct Gemini API)
+          // Route 1: Personal Google Account (Direct Gemini API) — only when a direct AIza... key or Google OAuth is active
           if (useGooglePersonal)
           {
             String geminiKey = cfg.getGeminiApiKey();
+            if (!EddiesAiConfig.isDirectGoogleAiStudioKey(geminiKey))
+            {
+              geminiKey = "";
+            }
             String googleOAuthToken = "";
             if (geminiKey.isEmpty() && cfg.isGoogleSignedIn())
             {
@@ -251,32 +275,41 @@ public final class EddiesAiClient
                       || primaryGoogleErr.getMessage().contains("HTTP 429")
                       || primaryGoogleErr.getMessage().contains("NOT_FOUND")))
                 {
-                  String reply = callGoogleDirectGemini(
-                    fallbackGoogleModel,
-                    geminiKey,
-                    googleOAuthToken,
-                    cfg.getGoogleOAuthProjectId(),
-                    SYSTEM_INSTRUCTIONS,
-                    fullUserContent,
-                    thinkingBudget,
-                    cfg);
-                  callback.onSuccess(reply, displayLabel + " [" + fallbackGoogleModel + "]");
-                  return;
+                  try
+                  {
+                    String reply = callGoogleDirectGemini(
+                      fallbackGoogleModel,
+                      geminiKey,
+                      googleOAuthToken,
+                      cfg.getGoogleOAuthProjectId(),
+                      SYSTEM_INSTRUCTIONS,
+                      fullUserContent,
+                      thinkingBudget,
+                      cfg);
+                    callback.onSuccess(reply, displayLabel + " [" + fallbackGoogleModel + "]");
+                    return;
+                  }
+                  catch (Exception ignoreFallbackErr)
+                  {
+                  }
                 }
-                throw primaryGoogleErr;
+                // If no Company Farm key is available to fall back to, rethrow the Google error
+                if (cfg.getModelFarmApiKey().isEmpty() && !cfg.isCopilotSignedIn())
+                {
+                  throw primaryGoogleErr;
+                }
               }
             }
 
-            // If user selected a Google Personal model without configuring a Google key yet,
-            // only fall back to Company Model Farm if a Company Farm key is already configured.
+            // If user selected a Google Personal model without configuring a direct AIza Google key,
+            // fall through to use their saved Company Model Farm API Key if configured.
             if (cfg.getModelFarmApiKey().isEmpty() && !cfg.isCopilotSignedIn())
             {
               callback.onError(
-                "Personal Google Account is not configured yet.\n"
+                "No API key is configured yet.\n"
                 + "Click 'Account' at the top-right of this panel to:\n"
-                + "  1. Paste your personal Gemini API Key (from aistudio.google.com/app/apikey — stored encrypted on disk with AES-GCM-256), OR\n"
-                + "  2. Set the GEMINI_API_KEY environment variable in Windows, OR\n"
-                + "  3. Sign in with your Google Account in your browser (OAuth 2.0 — no password typed into Workbench).");
+                + "  1. Enter your Personal Google Gemini API Key (AIza... from aistudio.google.com/app/apikey), OR\n"
+                + "  2. Enter your Company AI Platform Subscription Key (https://aoai-farm.bosch-temp.com).");
               return;
             }
           }
@@ -324,25 +357,47 @@ public final class EddiesAiClient
           {
             String reply = callCompanyGateway(
               domain, apiKey, subscriptionId, targetModel, SYSTEM_INSTRUCTIONS, fullUserContent, cfg);
-            callback.onSuccess(reply, targetModel);
+            String label = (selectedUiModel != null && selectedUiModel.contains("Argon"))
+              ? (selectedUiModel + " [" + targetModel + "]")
+              : targetModel;
+            callback.onSuccess(reply, label);
           }
           catch (Exception primaryErr)
           {
-            String fallbackModel = "gpt-5-nano-2025-08-07";
-            if (!fallbackModel.equalsIgnoreCase(targetModel)
-              && (primaryErr.getMessage() != null)
-              && (primaryErr.getMessage().contains("HTTP 404")
-                  || primaryErr.getMessage().contains("HTTP 403")
-                  || primaryErr.getMessage().contains("DeploymentNotFound")))
+            String msg = primaryErr.getMessage() != null ? primaryErr.getMessage() : "";
+            boolean isAuthOrNotFound = msg.contains("HTTP 401")
+              || msg.contains("HTTP 403")
+              || msg.contains("HTTP 404")
+              || msg.contains("DeploymentNotFound");
+
+            if (isAuthOrNotFound)
             {
-              String reply = callCompanyGateway(
-                domain, apiKey, subscriptionId, fallbackModel, SYSTEM_INSTRUCTIONS, fullUserContent, cfg);
-              callback.onSuccess(reply, selectedUiModel + " -> " + fallbackModel);
+              // If a Gemini model (e.g. gemini-2.5-pro) requires Enterprise tier, try gemini-2.5-flash-lite first
+              String geminiLite = "gemini-2.5-flash-lite";
+              if (targetModel.toLowerCase().startsWith("gemini-") && !geminiLite.equalsIgnoreCase(targetModel))
+              {
+                try
+                {
+                  String reply = callCompanyGateway(
+                    domain, apiKey, subscriptionId, geminiLite, SYSTEM_INSTRUCTIONS, fullUserContent, cfg);
+                  callback.onSuccess(reply, selectedUiModel + " [" + geminiLite + "]");
+                  return;
+                }
+                catch (Exception ignoreGeminiLiteErr)
+                {
+                }
+              }
+
+              String fallbackModel = "gpt-5-nano-2025-08-07";
+              if (!fallbackModel.equalsIgnoreCase(targetModel))
+              {
+                String reply = callCompanyGateway(
+                  domain, apiKey, subscriptionId, fallbackModel, SYSTEM_INSTRUCTIONS, fullUserContent, cfg);
+                callback.onSuccess(reply, selectedUiModel + " [" + fallbackModel + "]");
+                return;
+              }
             }
-            else
-            {
-              throw primaryErr;
-            }
+            throw primaryErr;
           }
         }
         catch (Exception e)
@@ -413,7 +468,7 @@ public final class EddiesAiClient
       {
         return custom;
       }
-      return "gpt-5-nano-2025-08-07";
+      return "gemini-2.5-flash-lite";
     }
     if (m.contains("gemini-2.5-flash-lite") || m.contains("gemini-2.0-flash-lite"))
     {
@@ -626,17 +681,13 @@ public final class EddiesAiClient
       else
       {
         String deploymentName = model;
-        if ("gemini-2.0-flash-lite".equalsIgnoreCase(model) || "gemini-2.5-flash-lite".equalsIgnoreCase(model))
+        if ("gemini-2.0-flash-lite".equalsIgnoreCase(model))
         {
-          deploymentName = "google-gemini-2-0-flash-lite";
+          deploymentName = "gemini-2.5-flash-lite";
         }
-        else if ("gemini-2.5-flash".equalsIgnoreCase(model) || "gemini-2.0-flash".equalsIgnoreCase(model))
+        else if ("gemini-2.0-flash".equalsIgnoreCase(model))
         {
-          deploymentName = "google-gemini-2-5-flash";
-        }
-        else if ("gemini-2.5-pro".equalsIgnoreCase(model))
-        {
-          deploymentName = "google-gemini-2-5-pro";
+          deploymentName = "gemini-2.5-flash";
         }
 
         if (d.contains("/deployments/") || d.contains("/generateContent") || d.contains("/v1/chat") || d.contains("/publishers/"))
@@ -657,8 +708,12 @@ public final class EddiesAiClient
           }
         }
 
+        String bodyModel = deploymentName.toLowerCase().startsWith("gemini-")
+          ? ("google/" + deploymentName)
+          : model;
+
         requestBody = "{"
-          + "\"model\":" + jsonString(model) + ","
+          + "\"model\":" + jsonString(bodyModel) + ","
           + "\"messages\":["
           + "{\"role\":\"system\",\"content\":" + jsonString(instructions) + "},"
           + "{\"role\":\"user\",\"content\":" + jsonString(prompt) + "}"

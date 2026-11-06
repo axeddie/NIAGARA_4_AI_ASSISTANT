@@ -45,6 +45,7 @@ public final class EddiesAiSettingsDialog
     final Runnable onSettingsSaved)
   {
     final EddiesAiConfig cfg = EddiesAiConfig.get();
+    cfg.load();
 
     BFont headerFont = BFont.make("Tahoma", 11.0, BFont.BOLD);
     BFont labelFont = BFont.make("Tahoma", 11.0);
@@ -80,6 +81,12 @@ public final class EddiesAiSettingsDialog
     else if (cfg.isGoogleSignedIn())
     {
       initialGoogleState = "Signed in via Google OAuth: " + cfg.getGoogleUserEmail();
+    }
+    else if (!cfg.getStoredModelFarmApiKeyOnly().isEmpty())
+    {
+      initialGoogleState = "Ready via Encrypted Key ("
+        + EddiesAiConfig.maskSecretPreview(cfg.getStoredModelFarmApiKeyOnly())
+        + ") — or paste a direct AIza... Google Key";
     }
     else
     {
@@ -468,9 +475,6 @@ public final class EddiesAiSettingsDialog
       @Override
       public CommandArtifact doInvoke()
       {
-        String enteredGeminiKey = geminiKeyField.getText();
-        cfg.setGeminiApiKey(enteredGeminiKey);
-
         cfg.setModelFarmDomain(domainField.getText());
         cfg.setModelFarmApiKey(apiKeyField.getText());
         cfg.setModelFarmSubscriptionId(subIdField.getText());
@@ -481,6 +485,9 @@ public final class EddiesAiSettingsDialog
           cfg.setModelFarmProxyPort(Integer.parseInt(proxyPortField.getText().trim()));
         }
         catch (NumberFormatException ignore) {}
+
+        String enteredGeminiKey = geminiKeyField.getText();
+        cfg.setGeminiApiKey(enteredGeminiKey);
 
         // If user entered a personal Google key and was previously on a Company Farm model,
         // automatically switch the active model to Gemini 4 Argon (Medium) (Google Ultra ⭐)!

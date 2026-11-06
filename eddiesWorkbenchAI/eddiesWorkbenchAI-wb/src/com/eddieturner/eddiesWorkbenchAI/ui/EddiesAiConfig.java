@@ -119,9 +119,11 @@ public final class EddiesAiConfig
         return;
       }
       in = new FileInputStream(configFile);
+      props.clear();
       props.load(in);
       decryptedCache.clear();
       lastLoadedModifiedMs = mod;
+      cleanupPlaceholderSecrets();
     }
     catch (Throwable ignore)
     {
@@ -434,7 +436,14 @@ public final class EddiesAiConfig
 
   public void setGeminiApiKey(String key)
   {
-    setSecret("geminiApiKey", sanitizeKey(key));
+    String clean = sanitizeKey(key);
+    if (!clean.isEmpty() && !isDirectGoogleAiStudioKey(clean))
+    {
+      setSecret("modelFarmApiKey", clean);
+      setSecret("geminiApiKey", "");
+      return;
+    }
+    setSecret("geminiApiKey", clean);
   }
 
   public static String maskSecretPreview(String secret)
@@ -824,6 +833,74 @@ public final class EddiesAiConfig
     setStr("ollamaModel", model);
   }
 
+  private synchronized void cleanupPlaceholderSecrets()
+  {
+    boolean changed = false;
+    String[] secretKeys = {
+      "geminiApiKey",
+      "modelFarmApiKey",
+      "openAiApiKey",
+      "anthropicApiKey"
+    };
+    for (int i = 0; i < secretKeys.length; i++)
+    {
+      String k = secretKeys[i];
+      String raw = props.getProperty(k);
+      if (raw != null && !raw.trim().isEmpty())
+      {
+        String val = getSecret(k, "");
+        if (isPlaceholderKey(val))
+        {
+          props.remove(k);
+          changed = true;
+        }
+      }
+    }
+    // If a non-AIza key (e.g., 32-char hex Model Farm key) was placed in geminiApiKey,
+    // move it to modelFarmApiKey if modelFarmApiKey is empty, and clear geminiApiKey.
+    String gKey = getSecret("geminiApiKey", "");
+    if (!gKey.isEmpty() && !isDirectGoogleAiStudioKey(gKey))
+    {
+      String mfKey = getSecret("modelFarmApiKey", "");
+      if (mfKey.isEmpty() || isPlaceholderKey(mfKey))
+      {
+        setSecret("modelFarmApiKey", gKey);
+      }
+      props.remove("geminiApiKey");
+      changed = true;
+    }
+    if (changed)
+    {
+      save();
+    }
+  }
+
+  public static boolean isDirectGoogleAiStudioKey(String key)
+  {
+    if (key == null) return false;
+    String clean = sanitizeKey(key);
+    return clean.startsWith("AIza") && clean.length() >= 30;
+  }
+
+  public static boolean isPlaceholderKey(String key)
+  {
+    if (key == null) return true;
+    String u = key.trim().toUpperCase();
+    if (u.isEmpty()) return true;
+    return u.equals("YOUR_GEMINI_API_KEY")
+      || u.equals("YOUR_API_KEY")
+      || u.equals("YOUR_KEY")
+      || u.equals("API_KEY")
+      || u.equals("INSERT_API_KEY")
+      || u.equals("<YOUR-API-KEY>")
+      || u.equals("<API_KEY>")
+      || u.startsWith("YOUR_")
+      || u.endsWith("_API_KEY")
+      || u.contains("YOUR_GEMINI")
+      || u.contains("PLACEHOLDER")
+      || u.contains("••••");
+  }
+
   public static String sanitizeKey(String rawKey)
   {
     if (rawKey == null) return "";
@@ -839,6 +916,10 @@ public final class EddiesAiConfig
     {
       key = key.substring(7).trim();
     }
+    if (isPlaceholderKey(key))
+    {
+      return "";
+    }
     return key;
   }
 
@@ -850,38 +931,46 @@ public final class EddiesAiConfig
       || model.contains("Argon")
       || (model.toLowerCase().contains("gemini") && !model.contains("Company Farm"));
 
+    String geminiKey = getGeminiApiKey();
+    String farmKey = getModelFarmApiKey();
+    String subId = getModelFarmSubscriptionId();
+
     if (wantsGooglePersonal)
     {
-      if (!getGeminiApiKey().isEmpty())
+      if (!geminiKey.isEmpty() && isDirectGoogleAiStudioKey(geminiKey))
       {
         String src = isGeminiApiKeyFromEnv() ? "Env Var" : "Encrypted Key";
-        return "Google Ultra: Ready (" + src + " " + maskSecretPreview(getGeminiApiKey()) + ")";
+        return "Google Ultra: Ready (" + src + " " + maskSecretPreview(geminiKey) + ")";
       }
       if (isGoogleSignedIn())
       {
         String email = getGoogleUserEmail();
         return "Google Ultra OAuth: " + (email.isEmpty() ? "Signed In" : email);
       }
-      if (!getModelFarmApiKey().isEmpty())
+      if (!farmKey.isEmpty())
       {
-        return "Google Key Not Set (Will Fallback to Company Farm)";
+        return "Ready (Encrypted Key " + maskSecretPreview(farmKey)
+          + (subId.isEmpty() ? ")" : " | " + subId + ")");
       }
-      return "Needs Google API Key — Click 'Account' above";
+      if (isCopilotSignedIn())
+      {
+        return "M365 SSO Ready: " + getCopilotUserDisplay();
+      }
+      return "Needs API Key — Click 'Account' above";
     }
 
-    if (!getModelFarmApiKey().isEmpty())
+    if (!farmKey.isEmpty())
     {
-      String domain = getModelFarmDomain();
-      String subId = getModelFarmSubscriptionId();
-      return "Company Farm: Ready (" + domain + (subId.isEmpty() ? ")" : " | SubID set)");
+      return "Company Farm: Ready (Encrypted Key " + maskSecretPreview(farmKey)
+        + (subId.isEmpty() ? ")" : " | " + subId + ")");
     }
     if (isCopilotSignedIn())
     {
       return "M365 SSO: " + getCopilotUserDisplay();
     }
-    if (!getGeminiApiKey().isEmpty())
+    if (!geminiKey.isEmpty())
     {
-      return "Google Personal Key Ready (" + maskSecretPreview(getGeminiApiKey()) + ")";
+      return "Google Personal Key Ready (" + maskSecretPreview(geminiKey) + ")";
     }
     return "Needs Key/Login — Click 'Account' above";
   }
