@@ -92,20 +92,7 @@ public final class EddiesAiClient
 
   public static boolean isPersonalGoogleSelection(String selectedUiModel, EddiesAiConfig cfg)
   {
-    if (selectedUiModel != null)
-    {
-      if (selectedUiModel.contains("Google Ultra")
-        || selectedUiModel.contains("Google Personal")
-        || selectedUiModel.contains("Argon"))
-      {
-        return true;
-      }
-      if (selectedUiModel.contains("Company Farm"))
-      {
-        return false;
-      }
-    }
-    return cfg != null && cfg.isGooglePersonalReady();
+    return EddiesAiConfig.isPersonalGoogleModelName(selectedUiModel);
   }
 
   private static int getThinkingBudgetForUiModel(String selectedUiModel)
@@ -161,25 +148,7 @@ public final class EddiesAiClient
           }
           if (!EddiesAiConfig.isDirectGoogleAiStudioKey(keyToTest) && oauthToken.isEmpty())
           {
-            String farmKey = !keyToTest.isEmpty() ? keyToTest : cfg.getModelFarmApiKey();
-            if (!farmKey.isEmpty())
-            {
-              String testDeployment = "gemini-2.5-flash-lite";
-              String reply = callCompanyGateway(
-                cfg.getModelFarmDomain(),
-                farmKey,
-                cfg.getModelFarmSubscriptionId(),
-                testDeployment,
-                "You are Eddie's Niagara Workbench AI Assistant.",
-                "Reply with one short sentence confirming that Eddie's AI Assistant connection is working.",
-                cfg);
-              callback.onSuccess(reply, testDeployment + " (Saved Encrypted Key)");
-              return;
-            }
-          }
-          if (keyToTest.isEmpty() && oauthToken.isEmpty())
-          {
-            callback.onError("Please paste your API Key (or sign in via OAuth) first.");
+            callback.onError("Please paste a valid Google Gemini API Key (starting with AIza...) or sign in via Google OAuth first.");
             return;
           }
 
@@ -233,7 +202,7 @@ public final class EddiesAiClient
 
           boolean useGooglePersonal = isPersonalGoogleSelection(selectedUiModel, cfg);
 
-          // Route 1: Personal Google Account (Direct Gemini API) — only when a direct AIza... key or Google OAuth is active
+          // Route 1: Personal Google Account (Direct Gemini API) — strictly requires a direct AIza... key or Google OAuth
           if (useGooglePersonal)
           {
             String geminiKey = cfg.getGeminiApiKey();
@@ -247,74 +216,65 @@ public final class EddiesAiClient
               googleOAuthToken = EddiesAiAuthManager.getValidGoogleAccessToken();
             }
 
-            if (!geminiKey.isEmpty() || !googleOAuthToken.isEmpty())
-            {
-              String googleModel = mapUiModelToGoogleDirectModel(selectedUiModel, cfg);
-              int thinkingBudget = getThinkingBudgetForUiModel(selectedUiModel);
-              String displayLabel = getDisplayLabelForGoogleModel(selectedUiModel, googleModel);
-              try
-              {
-                String reply = callGoogleDirectGemini(
-                  googleModel,
-                  geminiKey,
-                  googleOAuthToken,
-                  cfg.getGoogleOAuthProjectId(),
-                  SYSTEM_INSTRUCTIONS,
-                  fullUserContent,
-                  thinkingBudget,
-                  cfg);
-                callback.onSuccess(reply, displayLabel);
-                return;
-              }
-              catch (Exception primaryGoogleErr)
-              {
-                String fallbackGoogleModel = "gemini-2.5-flash";
-                if (!fallbackGoogleModel.equalsIgnoreCase(googleModel)
-                  && primaryGoogleErr.getMessage() != null
-                  && (primaryGoogleErr.getMessage().contains("HTTP 404")
-                      || primaryGoogleErr.getMessage().contains("HTTP 429")
-                      || primaryGoogleErr.getMessage().contains("NOT_FOUND")))
-                {
-                  try
-                  {
-                    String reply = callGoogleDirectGemini(
-                      fallbackGoogleModel,
-                      geminiKey,
-                      googleOAuthToken,
-                      cfg.getGoogleOAuthProjectId(),
-                      SYSTEM_INSTRUCTIONS,
-                      fullUserContent,
-                      thinkingBudget,
-                      cfg);
-                    callback.onSuccess(reply, displayLabel + " [" + fallbackGoogleModel + "]");
-                    return;
-                  }
-                  catch (Exception ignoreFallbackErr)
-                  {
-                  }
-                }
-                // If no Company Farm key is available to fall back to, rethrow the Google error
-                if (cfg.getModelFarmApiKey().isEmpty() && !cfg.isCopilotSignedIn())
-                {
-                  throw primaryGoogleErr;
-                }
-              }
-            }
-
-            // If user selected a Google Personal model without configuring a direct AIza Google key,
-            // fall through to use their saved Company Model Farm API Key if configured.
-            if (cfg.getModelFarmApiKey().isEmpty() && !cfg.isCopilotSignedIn())
+            if (geminiKey.isEmpty() && googleOAuthToken.isEmpty())
             {
               callback.onError(
-                "No API key is configured yet.\n"
+                "No Personal Google credential is configured for '" + selectedUiModel + "'.\n"
                 + "Click 'Account' at the top-right of this panel to:\n"
                 + "  1. Enter your Personal Google Gemini API Key (AIza... from aistudio.google.com/app/apikey), OR\n"
-                + "  2. Enter your Company AI Platform Subscription Key (https://aoai-farm.bosch-temp.com).");
+                + "  2. Sign in via Google OAuth / CLI.");
               return;
+            }
+
+            String googleModel = mapUiModelToGoogleDirectModel(selectedUiModel, cfg);
+            int thinkingBudget = getThinkingBudgetForUiModel(selectedUiModel);
+            String displayLabel = getDisplayLabelForGoogleModel(selectedUiModel, googleModel);
+            try
+            {
+              String reply = callGoogleDirectGemini(
+                googleModel,
+                geminiKey,
+                googleOAuthToken,
+                cfg.getGoogleOAuthProjectId(),
+                SYSTEM_INSTRUCTIONS,
+                fullUserContent,
+                thinkingBudget,
+                cfg);
+              callback.onSuccess(reply, displayLabel);
+              return;
+            }
+            catch (Exception primaryGoogleErr)
+            {
+              String fallbackGoogleModel = "gemini-2.5-flash";
+              if (!fallbackGoogleModel.equalsIgnoreCase(googleModel)
+                && primaryGoogleErr.getMessage() != null
+                && (primaryGoogleErr.getMessage().contains("HTTP 404")
+                    || primaryGoogleErr.getMessage().contains("HTTP 429")
+                    || primaryGoogleErr.getMessage().contains("NOT_FOUND")))
+              {
+                try
+                {
+                  String reply = callGoogleDirectGemini(
+                    fallbackGoogleModel,
+                    geminiKey,
+                    googleOAuthToken,
+                    cfg.getGoogleOAuthProjectId(),
+                    SYSTEM_INSTRUCTIONS,
+                    fullUserContent,
+                    thinkingBudget,
+                    cfg);
+                  callback.onSuccess(reply, displayLabel + " [" + fallbackGoogleModel + "]");
+                  return;
+                }
+                catch (Exception ignoreFallbackErr)
+                {
+                }
+              }
+              throw primaryGoogleErr;
             }
           }
 
-          // Route 2: Company AI Platform / Model Farm Gateway
+          // Route 2: Company AI Platform / Model Farm Gateway — strictly requires Company Subscription Key or M365 SSO
           String domain = cfg.getModelFarmDomain();
           String apiKey = cfg.getModelFarmApiKey();
           String subscriptionId = cfg.getModelFarmSubscriptionId();
@@ -326,29 +286,11 @@ public final class EddiesAiClient
 
           if (apiKey == null || apiKey.trim().isEmpty())
           {
-            // Check if the user has a Personal Google Key configured even though a Company model was selected
-            if (cfg.isGooglePersonalReady())
-            {
-              String geminiKey = cfg.getGeminiApiKey();
-              String googleOAuthToken = geminiKey.isEmpty() ? EddiesAiAuthManager.getValidGoogleAccessToken() : "";
-              String googleModel = mapUiModelToGoogleDirectModel(selectedUiModel, cfg);
-              String reply = callGoogleDirectGemini(
-                googleModel,
-                geminiKey,
-                googleOAuthToken,
-                cfg.getGoogleOAuthProjectId(),
-                SYSTEM_INSTRUCTIONS,
-                fullUserContent,
-                cfg);
-              callback.onSuccess(reply, googleModel + " (Google Personal)");
-              return;
-            }
-
             callback.onError(
-              "No AI account or API key is configured yet.\n"
-              + "Click 'Account' at the top of this sidebar to:\n"
-              + "  1. Enter your Personal Google Gemini API Key (encrypted with AES-GCM-256 on disk), OR\n"
-              + "  2. Enter your Company Model Farm Subscription Key (https://aoai-farm.bosch-temp.com).");
+              "No Company AI credentials or API key are configured for '" + selectedUiModel + "'.\n"
+              + "Click 'Account' at the top-right of this panel to:\n"
+              + "  1. Enter your Company Model Farm Subscription Key (https://aoai-farm.bosch-temp.com), OR\n"
+              + "  2. Click 'Sign in with Microsoft 365 (Browser SSO)'.");
             return;
           }
 

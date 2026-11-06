@@ -380,11 +380,27 @@ public final class EddiesAiConfig
 
   // ---- General UI & Execution Preferences ----
 
-  public static final String DEFAULT_MODEL = "Gemini 4 Argon (Medium) (Google Ultra ⭐)";
+  public static final String DEFAULT_COMPANY_MODEL = "gpt-5-nano-2025-08-07 (Company Farm ⭐)";
+  public static final String DEFAULT_GOOGLE_MODEL = "Gemini 4 Argon (Medium) (Google Ultra ⭐)";
+  public static final String DEFAULT_MODEL = DEFAULT_COMPANY_MODEL;
+
+  public static boolean isPersonalGoogleModelName(String model)
+  {
+    if (model == null) return false;
+    return model.contains("Google Ultra")
+      || model.contains("Google Personal")
+      || model.contains("Argon");
+  }
 
   public String getSelectedModel()
   {
-    return getStr("selectedModel", DEFAULT_MODEL);
+    String def = isGooglePersonalReady() ? DEFAULT_GOOGLE_MODEL : DEFAULT_COMPANY_MODEL;
+    String saved = getStr("selectedModel", def);
+    if (!isGooglePersonalReady() && isPersonalGoogleModelName(saved))
+    {
+      return DEFAULT_COMPANY_MODEL;
+    }
+    return saved;
   }
 
   public void setSelectedModel(String model)
@@ -439,7 +455,6 @@ public final class EddiesAiConfig
     String clean = sanitizeKey(key);
     if (!clean.isEmpty() && !isDirectGoogleAiStudioKey(clean))
     {
-      setSecret("modelFarmApiKey", clean);
       setSecret("geminiApiKey", "");
       return;
     }
@@ -548,7 +563,13 @@ public final class EddiesAiConfig
 
   public boolean isGooglePersonalReady()
   {
-    return !getGeminiApiKey().isEmpty() || isGoogleSignedIn();
+    String gKey = getGeminiApiKey();
+    return (!gKey.isEmpty() && isDirectGoogleAiStudioKey(gKey)) || isGoogleSignedIn();
+  }
+
+  public boolean isCompanyReady()
+  {
+    return !getModelFarmApiKey().isEmpty() || isCopilotSignedIn();
   }
 
   public void clearGoogleAuth()
@@ -856,16 +877,10 @@ public final class EddiesAiConfig
         }
       }
     }
-    // If a non-AIza key (e.g., 32-char hex Model Farm key) was placed in geminiApiKey,
-    // move it to modelFarmApiKey if modelFarmApiKey is empty, and clear geminiApiKey.
+    // If a non-AIza key was placed in geminiApiKey, clear it so only valid Google keys remain.
     String gKey = getSecret("geminiApiKey", "");
     if (!gKey.isEmpty() && !isDirectGoogleAiStudioKey(gKey))
     {
-      String mfKey = getSecret("modelFarmApiKey", "");
-      if (mfKey.isEmpty() || isPlaceholderKey(mfKey))
-      {
-        setSecret("modelFarmApiKey", gKey);
-      }
       props.remove("geminiApiKey");
       changed = true;
     }
@@ -926,10 +941,7 @@ public final class EddiesAiConfig
   public String getAuthSummaryBadge()
   {
     String model = getSelectedModel();
-    boolean wantsGooglePersonal = model.contains("Google Ultra")
-      || model.contains("Google Personal")
-      || model.contains("Argon")
-      || (model.toLowerCase().contains("gemini") && !model.contains("Company Farm"));
+    boolean wantsGooglePersonal = isPersonalGoogleModelName(model);
 
     String geminiKey = getGeminiApiKey();
     String farmKey = getModelFarmApiKey();
@@ -940,23 +952,14 @@ public final class EddiesAiConfig
       if (!geminiKey.isEmpty() && isDirectGoogleAiStudioKey(geminiKey))
       {
         String src = isGeminiApiKeyFromEnv() ? "Env Var" : "Encrypted Key";
-        return "Google Ultra: Ready (" + src + " " + maskSecretPreview(geminiKey) + ")";
+        return "Google Personal: Ready (" + src + " " + maskSecretPreview(geminiKey) + ")";
       }
       if (isGoogleSignedIn())
       {
         String email = getGoogleUserEmail();
-        return "Google Ultra OAuth: " + (email.isEmpty() ? "Signed In" : email);
+        return "Google OAuth: " + (email.isEmpty() ? "Signed In" : email);
       }
-      if (!farmKey.isEmpty())
-      {
-        return "Ready (Encrypted Key " + maskSecretPreview(farmKey)
-          + (subId.isEmpty() ? ")" : " | " + subId + ")");
-      }
-      if (isCopilotSignedIn())
-      {
-        return "M365 SSO Ready: " + getCopilotUserDisplay();
-      }
-      return "Needs API Key — Click 'Account' above";
+      return "Needs Google Key / OAuth — Click 'Account' above";
     }
 
     if (!farmKey.isEmpty())
@@ -966,12 +969,8 @@ public final class EddiesAiConfig
     }
     if (isCopilotSignedIn())
     {
-      return "M365 SSO: " + getCopilotUserDisplay();
+      return "M365 SSO Ready: " + getCopilotUserDisplay();
     }
-    if (!geminiKey.isEmpty())
-    {
-      return "Google Personal Key Ready (" + maskSecretPreview(geminiKey) + ")";
-    }
-    return "Needs Key/Login — Click 'Account' above";
+    return "Needs Company Credentials / Key — Click 'Account' above";
   }
 }

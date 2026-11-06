@@ -55,9 +55,9 @@ public final class EddiesAiSettingsDialog
     statusBanner.setForeground(BBrush.makeSolid(BColor.make(30, 95, 65)));
 
     // ============================================================================
-    // Section 1: Personal Google Account (Direct Gemini API + Secure Storage)
+    // Section 2: Personal Google Account (Direct Gemini API + Secure Storage)
     // ============================================================================
-    BLabel secGoogleTitle = new BLabel("1. Personal Google Gemini Ultra Account (Default: Gemini 4 Argon Medium ⭐)", headerFont);
+    BLabel secGoogleTitle = new BLabel("2. Personal Google Account (Optional — Unlocks Google Ultra / Personal Models)", headerFont);
     secGoogleTitle.setForeground(BBrush.makeSolid(BColor.make(20, 95, 55)));
 
     BLabel googleSecurityNote = new BLabel(
@@ -82,15 +82,9 @@ public final class EddiesAiSettingsDialog
     {
       initialGoogleState = "Signed in via Google OAuth: " + cfg.getGoogleUserEmail();
     }
-    else if (!cfg.getStoredModelFarmApiKeyOnly().isEmpty())
-    {
-      initialGoogleState = "Ready via Encrypted Key ("
-        + EddiesAiConfig.maskSecretPreview(cfg.getStoredModelFarmApiKeyOnly())
-        + ") — or paste a direct AIza... Google Key";
-    }
     else
     {
-      initialGoogleState = "Not configured yet — Paste a Gemini API Key below or set GEMINI_API_KEY env var.";
+      initialGoogleState = "Not configured — Only Company Farm models are shown until a Google Key (AIza...) or OAuth is added.";
     }
     final BLabel googleStatusLabel = new BLabel(initialGoogleState, smallFont);
     googleStatusLabel.setForeground(BBrush.makeSolid(BColor.make(25, 80, 140)));
@@ -246,9 +240,14 @@ public final class EddiesAiSettingsDialog
         geminiKeyField.setText("");
         cfg.setGeminiApiKey("");
         cfg.clearGoogleAuth();
+        if (!cfg.isGooglePersonalReady())
+        {
+          cfg.setSelectedModel(EddiesAiConfig.DEFAULT_COMPANY_MODEL);
+          cfg.save();
+        }
         googleStatusLabel.setText(cfg.isGeminiApiKeyFromEnv()
           ? "Using GEMINI_API_KEY from Windows Environment Variable."
-          : "Cleared stored Google API Key & OAuth session.");
+          : "Cleared stored Google API Key & OAuth session (Company Farm models active).");
         statusBanner.setText("Cleared stored Personal Google credentials from disk.");
         googleStatusLabel.relayout();
         googleStatusLabel.repaint();
@@ -281,9 +280,9 @@ public final class EddiesAiSettingsDialog
     secGoogleBox.setBorder(BBorder.make(1.0, BBorder.SOLID, BBrush.makeSolid(BColor.make(180, 215, 195))));
 
     // ============================================================================
-    // Section 2: Company AI Platform / Model Farm Subscription & M365 SSO
+    // Section 1: Company AI Platform / Model Farm Subscription & M365 SSO
     // ============================================================================
-    BLabel sec1Title = new BLabel("2. Company AI Platform Subscription (Model Farm Gateway & M365 SSO)", headerFont);
+    BLabel sec1Title = new BLabel("1. Company AI Platform Subscription (Model Farm Gateway & M365 SSO — Default)", headerFont);
     sec1Title.setForeground(BBrush.makeSolid(BColor.make(25, 65, 130)));
 
     final BTextField domainField = new BTextField(cfg.getModelFarmDomain(), 38, true);
@@ -445,8 +444,8 @@ public final class EddiesAiSettingsDialog
     mainStack.setRowGap(10.0);
     mainStack.setStretchColumn(0);
     mainStack.setColumnAlign(BHalign.left);
-    mainStack.add("secGoogle", secGoogleBox);
     mainStack.add("sec1", sec1Box);
+    mainStack.add("secGoogle", secGoogleBox);
     mainStack.add("status", new BBorderPane(statusBanner, BInsets.make(2.0, 4.0, 2.0, 4.0)));
 
     final BDialog[] dialogRef = new BDialog[1];
@@ -489,12 +488,15 @@ public final class EddiesAiSettingsDialog
         String enteredGeminiKey = geminiKeyField.getText();
         cfg.setGeminiApiKey(enteredGeminiKey);
 
-        // If user entered a personal Google key and was previously on a Company Farm model,
-        // automatically switch the active model to Gemini 4 Argon (Medium) (Google Ultra ⭐)!
-        if (enteredGeminiKey != null && !enteredGeminiKey.trim().isEmpty()
-          && cfg.getSelectedModel().contains("Company Farm"))
+        // Put Company AI Subscription first (Section 1) and Personal Google Account second (Section 2)
+        // If user entered a valid personal Google key, unlock Google models; if cleared, revert to Company default.
+        if (cfg.isGooglePersonalReady() && cfg.getSelectedModel().contains("Company Farm"))
         {
-          cfg.setSelectedModel(EddiesAiConfig.DEFAULT_MODEL);
+          cfg.setSelectedModel(EddiesAiConfig.DEFAULT_GOOGLE_MODEL);
+        }
+        else if (!cfg.isGooglePersonalReady() && EddiesAiConfig.isPersonalGoogleModelName(cfg.getSelectedModel()))
+        {
+          cfg.setSelectedModel(EddiesAiConfig.DEFAULT_COMPANY_MODEL);
         }
 
         cfg.save();

@@ -41,13 +41,7 @@ public final class BEddiesAiRightPanel
 {
   private static final String IPC_PREFIX = "EDDIES_IPC:";
 
-  private static final String[] COMPANY_MODELS = new String[] {
-    "Gemini 4 Argon (Medium) (Google Ultra ⭐)",
-    "Gemini 4 Argon (High) (Google Ultra)",
-    "gemini-2.5-pro (Google Personal ⭐)",
-    "gemini-2.5-flash (Google Personal ⭐)",
-    "gemini-2.5-flash-lite (Google Personal)",
-    "gemini-2.0-flash (Google Personal)",
+  private static final String[] COMPANY_FARM_MODELS = new String[] {
     "gpt-5-nano-2025-08-07 (Company Farm ⭐)",
     "askbosch-prod-farm-openai-gpt-4o-mini-2024-07-18 (Company Farm ⭐)",
     "gemini-2.5-flash-lite (Company Farm ⭐)",
@@ -59,6 +53,27 @@ public final class BEddiesAiRightPanel
     "claude-sonnet-4-5@20250929 (Company Farm)",
     "claude-opus-4-8 (Company Farm)"
   };
+
+  private static final String[] GOOGLE_PERSONAL_MODELS = new String[] {
+    "Gemini 4 Argon (Medium) (Google Ultra ⭐)",
+    "Gemini 4 Argon (High) (Google Ultra)",
+    "gemini-2.5-pro (Google Personal ⭐)",
+    "gemini-2.5-flash (Google Personal ⭐)",
+    "gemini-2.5-flash-lite (Google Personal)",
+    "gemini-2.0-flash (Google Personal)"
+  };
+
+  private static String[] getAvailableModels(EddiesAiConfig cfg)
+  {
+    if (cfg != null && cfg.isGooglePersonalReady())
+    {
+      String[] combined = new String[COMPANY_FARM_MODELS.length + GOOGLE_PERSONAL_MODELS.length];
+      System.arraycopy(COMPANY_FARM_MODELS, 0, combined, 0, COMPANY_FARM_MODELS.length);
+      System.arraycopy(GOOGLE_PERSONAL_MODELS, 0, combined, COMPANY_FARM_MODELS.length, GOOGLE_PERSONAL_MODELS.length);
+      return combined;
+    }
+    return COMPANY_FARM_MODELS;
+  }
 
   private final BWbShell shell;
   private final Runnable onCloseRequested;
@@ -154,9 +169,19 @@ public final class BEddiesAiRightPanel
       {
         this.currentSelectedModel = savedModel;
       }
+      String[] availableModels = getAvailableModels(cfg);
+      StringBuilder jsModels = new StringBuilder("[");
+      for (int i = 0; i < availableModels.length; i++)
+      {
+        if (i > 0) jsModels.append(", ");
+        jsModels.append(jsStr(availableModels[i]));
+      }
+      jsModels.append("]");
+
       String badge = cfg.getAuthSummaryBadge();
       boolean needsKey = badge != null && badge.startsWith("Needs ");
-      runJs("updateAuthBadge("
+      runJs("setModelList(" + jsModels.toString() + ", " + jsStr(currentSelectedModel) + ");"
+        + "updateAuthBadge("
         + jsStr(badge) + ", "
         + (needsKey ? "true" : "false") + ", "
         + jsStr(currentSelectedModel) + ");");
@@ -413,7 +438,10 @@ public final class BEddiesAiRightPanel
     {
       String newKey = prompt.substring(6).trim();
       EddiesAiConfig.get().setGeminiApiKey(newKey);
-      EddiesAiConfig.get().setSelectedModel(EddiesAiConfig.DEFAULT_MODEL);
+      if (EddiesAiConfig.get().isGooglePersonalReady())
+      {
+        EddiesAiConfig.get().setSelectedModel(EddiesAiConfig.DEFAULT_GOOGLE_MODEL);
+      }
       EddiesAiConfig.get().save();
       refreshAuthBadge();
       appendSystemMessage("Credentials Saved", "Saved & AES-GCM-256 encrypted Personal Google Gemini API Key.", false);
@@ -849,7 +877,7 @@ public final class BEddiesAiRightPanel
             }
           });
 
-          String html = EddiesAiWebUiTemplate.buildHtml(COMPANY_MODELS, currentSelectedModel);
+          String html = EddiesAiWebUiTemplate.buildHtml(getAvailableModels(EddiesAiConfig.get()), currentSelectedModel);
           webEngine.loadContent(html);
           return null;
         }

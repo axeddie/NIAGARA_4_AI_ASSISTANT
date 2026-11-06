@@ -858,6 +858,23 @@ final class EddiesAiWebUiTemplate
       "    }\n" +
       "  }\n" +
       "\n" +
+      "  function setModelList(models, selectedModel) {\n" +
+      "    var sel = document.getElementById('modelSelect');\n" +
+      "    if (!sel || !models || !models.length) return;\n" +
+      "    sel.innerHTML = '';\n" +
+      "    var matchedIdx = 0;\n" +
+      "    for (var i = 0; i < models.length; i++) {\n" +
+      "      var opt = document.createElement('option');\n" +
+      "      opt.value = models[i];\n" +
+      "      opt.textContent = models[i];\n" +
+      "      if (selectedModel && (models[i] === selectedModel || models[i].indexOf(selectedModel) === 0)) {\n" +
+      "        matchedIdx = i;\n" +
+      "      }\n" +
+      "      sel.appendChild(opt);\n" +
+      "    }\n" +
+      "    sel.selectedIndex = matchedIdx;\n" +
+      "  }\n" +
+      "\n" +
       "  function updateAuthBadge(badgeText, isNeedsKey, selectedModel) {\n" +
       "    var el = document.getElementById('authBadge');\n" +
       "    if (el) {\n" +

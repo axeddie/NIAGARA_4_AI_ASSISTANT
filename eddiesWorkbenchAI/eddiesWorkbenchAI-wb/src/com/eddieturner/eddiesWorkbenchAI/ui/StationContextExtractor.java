@@ -222,13 +222,6 @@ public final class StationContextExtractor
         }
         catch (Throwable ignore) {}
       }
-
-      // Opportunistically check if a Program component with Model Farm credentials is visible
-      // and EddiesAiConfig does not yet have a key configured
-      if (targetComp != null && EddiesAiConfig.get().getModelFarmApiKey().isEmpty())
-      {
-        tryAutoImportCredentials(targetComp);
-      }
     }
     catch (Throwable ignore)
     {
