@@ -16,12 +16,22 @@ final class EddiesAiWebUiTemplate
   static String buildHtml(String[] models, String selectedModel)
   {
     StringBuilder modelOptions = new StringBuilder();
+    StringBuilder modelMenuItems = new StringBuilder();
+    String initialSelectedLabel = (selectedModel != null && !selectedModel.isEmpty())
+      ? selectedModel
+      : (models != null && models.length > 0 ? models[0] : "");
     if (models != null)
     {
+      boolean matchedAny = false;
       for (int i = 0; i < models.length; i++)
       {
         String m = models[i];
-        boolean sel = (selectedModel != null && (m.equalsIgnoreCase(selectedModel) || m.startsWith(selectedModel)));
+        boolean sel = !matchedAny && (selectedModel != null && (m.equalsIgnoreCase(selectedModel) || m.startsWith(selectedModel)));
+        if (sel)
+        {
+          matchedAny = true;
+          initialSelectedLabel = m;
+        }
         modelOptions.append("<option value=\"")
           .append(escapeHtmlAttr(m))
           .append("\"")
@@ -29,6 +39,17 @@ final class EddiesAiWebUiTemplate
           .append(">")
           .append(escapeHtml(m))
           .append("</option>\n");
+        modelMenuItems.append("<div class=\"model-menu-item")
+          .append(sel ? " model-menu-item-active" : "")
+          .append("\" data-value=\"")
+          .append(escapeHtmlAttr(m))
+          .append("\" onclick=\"selectModelOption(this.getAttribute('data-value'))\">")
+          .append(escapeHtml(m))
+          .append("</div>\n");
+      }
+      if (!matchedAny && models.length > 0)
+      {
+        initialSelectedLabel = models[0];
       }
     }
 
@@ -179,20 +200,97 @@ final class EddiesAiWebUiTemplate
       "    flex-shrink: 0;\n" +
       "  }\n" +
       "  .model-select {\n" +
+      "    display: none;\n" +
+      "  }\n" +
+      "  .model-dropdown-wrap {\n" +
+      "    position: relative;\n" +
       "    -webkit-flex: 1;\n" +
       "    flex: 1;\n" +
       "    min-width: 0;\n" +
+      "  }\n" +
+      "  .model-select-btn {\n" +
+      "    width: 100%;\n" +
+      "    display: -webkit-flex;\n" +
+      "    display: flex;\n" +
+      "    -webkit-align-items: center;\n" +
+      "    align-items: center;\n" +
+      "    -webkit-justify-content: space-between;\n" +
+      "    justify-content: space-between;\n" +
       "    background: #0f2447;\n" +
       "    color: #f0f6ff;\n" +
       "    border: 1px solid #284f8a;\n" +
       "    border-radius: 5px;\n" +
-      "    padding: 4px 6px;\n" +
+      "    padding: 4px 8px;\n" +
       "    font-size: 11px;\n" +
       "    font-family: 'Segoe UI', Tahoma, sans-serif;\n" +
+      "    text-align: left;\n" +
+      "    cursor: pointer;\n" +
       "    outline: none;\n" +
       "  }\n" +
-      "  .model-select:focus {\n" +
+      "  .model-select-btn:hover,\n" +
+      "  .model-select-btn:focus,\n" +
+      "  .model-select-btn-open {\n" +
       "    border-color: #5ce1e6;\n" +
+      "    background: #132d59;\n" +
+      "  }\n" +
+      "  .model-select-label {\n" +
+      "    -webkit-flex: 1;\n" +
+      "    flex: 1;\n" +
+      "    min-width: 0;\n" +
+      "    white-space: nowrap;\n" +
+      "    overflow: hidden;\n" +
+      "    text-overflow: ellipsis;\n" +
+      "    color: #f0f6ff;\n" +
+      "  }\n" +
+      "  .model-select-arrow {\n" +
+      "    margin-left: 6px;\n" +
+      "    color: #5ce1e6;\n" +
+      "    font-size: 10px;\n" +
+      "    -webkit-flex-shrink: 0;\n" +
+      "    flex-shrink: 0;\n" +
+      "  }\n" +
+      "  .model-menu-popup {\n" +
+      "    display: none;\n" +
+      "    position: absolute;\n" +
+      "    top: 100%;\n" +
+      "    left: 0;\n" +
+      "    right: 0;\n" +
+      "    margin-top: 3px;\n" +
+      "    max-height: 360px;\n" +
+      "    overflow-y: auto;\n" +
+      "    overflow-x: hidden;\n" +
+      "    background-color: #0b1d3a;\n" +
+      "    border: 1px solid #5ce1e6;\n" +
+      "    border-radius: 6px;\n" +
+      "    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.85);\n" +
+      "    z-index: 9999;\n" +
+      "    padding: 3px 0;\n" +
+      "  }\n" +
+      "  .model-menu-item {\n" +
+      "    padding: 6px 10px;\n" +
+      "    font-size: 11.5px;\n" +
+      "    font-family: 'Segoe UI', Tahoma, sans-serif;\n" +
+      "    color: #f0f6ff;\n" +
+      "    background-color: #0b1d3a;\n" +
+      "    border-bottom: 1px solid rgba(40, 79, 138, 0.4);\n" +
+      "    cursor: pointer;\n" +
+      "    white-space: nowrap;\n" +
+      "    overflow: hidden;\n" +
+      "    text-overflow: ellipsis;\n" +
+      "  }\n" +
+      "  .model-menu-item:last-child {\n" +
+      "    border-bottom: none;\n" +
+      "  }\n" +
+      "  .model-menu-item:hover {\n" +
+      "    background-color: #1c4280;\n" +
+      "    color: #ffffff;\n" +
+      "  }\n" +
+      "  .model-menu-item-active {\n" +
+      "    background-color: #133366;\n" +
+      "    color: #72efdd;\n" +
+      "    font-weight: 700;\n" +
+      "    border-left: 3px solid #5ce1e6;\n" +
+      "    padding-left: 7px;\n" +
       "  }\n" +
       "  .auth-pill {\n" +
       "    -webkit-flex: 1;\n" +
@@ -698,9 +796,18 @@ final class EddiesAiWebUiTemplate
       "  <div class=\"control-deck\">\n" +
       "    <div class=\"deck-row\">\n" +
       "      <span class=\"deck-label\">Model:</span>\n" +
-      "      <select id=\"modelSelect\" class=\"model-select\" onchange=\"onModelChanged(this.value)\">\n" +
+      "      <div class=\"model-dropdown-wrap\" id=\"modelDropdownWrap\">\n" +
+      "        <select id=\"modelSelect\" class=\"model-select\" onchange=\"onModelChanged(this.value)\">\n" +
       modelOptions.toString() +
-      "      </select>\n" +
+      "        </select>\n" +
+      "        <button type=\"button\" id=\"modelSelectBtn\" class=\"model-select-btn\" onclick=\"toggleModelMenu(event)\" title=\"Select AI Model\">\n" +
+      "          <span id=\"modelSelectLabel\" class=\"model-select-label\">" + escapeHtml(initialSelectedLabel) + "</span>\n" +
+      "          <span class=\"model-select-arrow\">&#9662;</span>\n" +
+      "        </button>\n" +
+      "        <div id=\"modelMenuPopup\" class=\"model-menu-popup\">\n" +
+      modelMenuItems.toString() +
+      "        </div>\n" +
+      "      </div>\n" +
       "    </div>\n" +
       "    <div class=\"deck-row\">\n" +
       "      <span class=\"deck-label\">Auth:</span>\n" +
@@ -774,8 +881,79 @@ final class EddiesAiWebUiTemplate
       "  }\n" +
       "\n" +
       "  function onModelChanged(val) {\n" +
+      "    syncCustomModelDropdown(val);\n" +
       "    sendToJava('selectModel', val);\n" +
       "  }\n" +
+      "\n" +
+      "  function toggleModelMenu(e) {\n" +
+      "    if (e && e.stopPropagation) e.stopPropagation();\n" +
+      "    var popup = document.getElementById('modelMenuPopup');\n" +
+      "    var btn = document.getElementById('modelSelectBtn');\n" +
+      "    if (!popup) return;\n" +
+      "    var isOpen = (popup.style.display === 'block');\n" +
+      "    if (isOpen) {\n" +
+      "      closeModelMenu();\n" +
+      "    } else {\n" +
+      "      popup.style.display = 'block';\n" +
+      "      if (btn) btn.className = 'model-select-btn model-select-btn-open';\n" +
+      "    }\n" +
+      "  }\n" +
+      "\n" +
+      "  function closeModelMenu() {\n" +
+      "    var popup = document.getElementById('modelMenuPopup');\n" +
+      "    var btn = document.getElementById('modelSelectBtn');\n" +
+      "    if (popup) popup.style.display = 'none';\n" +
+      "    if (btn) btn.className = 'model-select-btn';\n" +
+      "  }\n" +
+      "\n" +
+      "  function selectModelOption(val) {\n" +
+      "    closeModelMenu();\n" +
+      "    if (!val) return;\n" +
+      "    var sel = document.getElementById('modelSelect');\n" +
+      "    if (sel) {\n" +
+      "      for (var i = 0; i < sel.options.length; i++) {\n" +
+      "        if (sel.options[i].value === val) {\n" +
+      "          sel.selectedIndex = i;\n" +
+      "          break;\n" +
+      "        }\n" +
+      "      }\n" +
+      "    }\n" +
+      "    syncCustomModelDropdown(val);\n" +
+      "    sendToJava('selectModel', val);\n" +
+      "  }\n" +
+      "\n" +
+      "  function syncCustomModelDropdown(selectedVal) {\n" +
+      "    var lbl = document.getElementById('modelSelectLabel');\n" +
+      "    if (lbl && selectedVal) {\n" +
+      "      lbl.textContent = selectedVal;\n" +
+      "    }\n" +
+      "    var popup = document.getElementById('modelMenuPopup');\n" +
+      "    if (popup) {\n" +
+      "      var items = popup.getElementsByClassName('model-menu-item');\n" +
+      "      for (var i = 0; i < items.length; i++) {\n" +
+      "        var itemVal = items[i].getAttribute('data-value');\n" +
+      "        if (selectedVal && itemVal === selectedVal) {\n" +
+      "          items[i].className = 'model-menu-item model-menu-item-active';\n" +
+      "        } else {\n" +
+      "          items[i].className = 'model-menu-item';\n" +
+      "        }\n" +
+      "      }\n" +
+      "    }\n" +
+      "  }\n" +
+      "\n" +
+      "  document.addEventListener('click', function(e) {\n" +
+      "    var wrap = document.getElementById('modelDropdownWrap');\n" +
+      "    if (wrap && e && e.target && !wrap.contains(e.target)) {\n" +
+      "      closeModelMenu();\n" +
+      "    }\n" +
+      "  });\n" +
+      "\n" +
+      "  document.addEventListener('keydown', function(e) {\n" +
+      "    var key = e ? (e.keyCode || e.which) : 0;\n" +
+      "    if (key === 27) {\n" +
+      "      closeModelMenu();\n" +
+      "    }\n" +
+      "  });\n" +
       "\n" +
       "  function onOptionsChanged() {\n" +
       "    var inc = document.getElementById('includeCtxCheck').checked ? '1' : '0';\n" +
@@ -860,8 +1038,10 @@ final class EddiesAiWebUiTemplate
       "\n" +
       "  function setModelList(models, selectedModel) {\n" +
       "    var sel = document.getElementById('modelSelect');\n" +
+      "    var popup = document.getElementById('modelMenuPopup');\n" +
       "    if (!sel || !models || !models.length) return;\n" +
       "    sel.innerHTML = '';\n" +
+      "    if (popup) popup.innerHTML = '';\n" +
       "    var matchedIdx = 0;\n" +
       "    for (var i = 0; i < models.length; i++) {\n" +
       "      var opt = document.createElement('option');\n" +
@@ -873,6 +1053,20 @@ final class EddiesAiWebUiTemplate
       "      sel.appendChild(opt);\n" +
       "    }\n" +
       "    sel.selectedIndex = matchedIdx;\n" +
+      "    var chosenVal = models[matchedIdx];\n" +
+      "    if (popup) {\n" +
+      "      for (var j = 0; j < models.length; j++) {\n" +
+      "        var item = document.createElement('div');\n" +
+      "        item.className = (j === matchedIdx) ? 'model-menu-item model-menu-item-active' : 'model-menu-item';\n" +
+      "        item.setAttribute('data-value', models[j]);\n" +
+      "        item.textContent = models[j];\n" +
+      "        item.onclick = function() {\n" +
+      "          selectModelOption(this.getAttribute('data-value'));\n" +
+      "        };\n" +
+      "        popup.appendChild(item);\n" +
+      "      }\n" +
+      "    }\n" +
+      "    syncCustomModelDropdown(chosenVal);\n" +
       "  }\n" +
       "\n" +
       "  function updateAuthBadge(badgeText, isNeedsKey, selectedModel) {\n" +
@@ -883,14 +1077,17 @@ final class EddiesAiWebUiTemplate
       "    }\n" +
       "    if (selectedModel) {\n" +
       "      var sel = document.getElementById('modelSelect');\n" +
-      "      if (sel && sel.value !== selectedModel) {\n" +
+      "      var actualVal = selectedModel;\n" +
+      "      if (sel) {\n" +
       "        for (var i = 0; i < sel.options.length; i++) {\n" +
       "          if (sel.options[i].value === selectedModel || sel.options[i].value.indexOf(selectedModel) === 0) {\n" +
       "            sel.selectedIndex = i;\n" +
+      "            actualVal = sel.options[i].value;\n" +
       "            break;\n" +
       "          }\n" +
       "        }\n" +
       "      }\n" +
+      "      syncCustomModelDropdown(actualVal);\n" +
       "    }\n" +
       "  }\n" +
       "\n" +

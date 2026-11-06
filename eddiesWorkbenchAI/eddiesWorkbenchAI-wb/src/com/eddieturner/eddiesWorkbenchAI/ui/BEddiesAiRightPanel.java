@@ -827,6 +827,37 @@ public final class BEddiesAiRightPanel
         {
           if (webEngine == null) return null;
 
+          try
+          {
+            if (webView != null && webView.getScene() != null)
+            {
+              javafx.scene.Scene scene = webView.getScene();
+              if (scene.getStylesheets() != null)
+              {
+                scene.getStylesheets().clear();
+              }
+              if (scene.getRoot() != null)
+              {
+                scene.getRoot().setStyle(
+                  "-fx-base: #0f2447; " +
+                  "-fx-background: #071122; " +
+                  "-fx-control-inner-background: #0b1d3a; " +
+                  "-fx-control-inner-background-alt: #0f2447; " +
+                  "-fx-color: #132d59; " +
+                  "-fx-accent: #0077b6; " +
+                  "-fx-focus-color: #5ce1e6; " +
+                  "-fx-selection-bar: #1c4280; " +
+                  "-fx-text-base-color: #f0f6ff; " +
+                  "-fx-text-background-color: #f0f6ff; " +
+                  "-fx-text-inner-color: #f0f6ff; " +
+                  "-fx-mark-color: #5ce1e6;");
+              }
+            }
+          }
+          catch (Throwable ignore)
+          {
+          }
+
           webEngine.setOnAlert(new EventHandler<WebEvent<String>>()
           {
             @Override
